@@ -1,0 +1,8 @@
+# VNSnowKey udev rules for Linux Wayland and X11
+# Placed at priority 70 so TAG+="uaccess" is evaluated before systemd's
+# 73-seat-late.rules, granting immediate read/write access on /dev/uinput and
+# /dev/input/event* for the active physical console user as well as members
+# of the 'input' group.
+
+KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="input", TAG+="uaccess", OPTIONS+="static_node=uinput"
+KERNEL=="event*", SUBSYSTEM=="input", MODE="0660", GROUP="input", TAG+="uaccess"

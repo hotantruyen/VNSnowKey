@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=VNSnowKey
+GenericName=Vietnamese Input Method
+GenericName[vi]=Bộ gõ Tiếng Việt
+Comment=Vietnamese Input Method for Linux (Wayland & X11)
+Comment[vi]=Bộ gõ Tiếng Việt cho Linux (Wayland & X11)
+Exec=vnsnowkey-gui --settings
+Icon=vnsnowkey
+Terminal=false
+Categories=Utility;Settings;System;
+Keywords=vietnamese;telex;vni;bamboo;wayland;input;vnsnowkey;
+StartupNotify=true

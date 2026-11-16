@@ -1,0 +1,7 @@
+vnsnowkey (1.0.0) unstable; urgency=medium
+
+  * Multi-desktop support (KDE Plasma, GNOME Shell, Hyprland, Sway, X11).
+  * Portable QSystemTrayIcon fallback when KF6StatusNotifierItem is unavailable.
+  * Game Mode with XFixes XWayland probe and zwp_input_method_v1 bridge.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Sun, 15 Nov 2026 08:50:00 +0700

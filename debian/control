@@ -1,0 +1,38 @@
+Source: vnsnowkey
+Section: utils
+Priority: optional
+Maintainer: VNSnowKey Contributors <vnsnowkey@localhost>
+Build-Depends:
+ debhelper-compat (= 13),
+ dbus,
+ g++,
+ gcc,
+ libevdev-dev,
+ libsystemd-dev,
+ libwayland-bin,
+ libwayland-dev,
+ libxkbcommon-dev,
+ make,
+ pkgconf,
+ qt6-base-dev,
+ qt6-svg-dev
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: vnsnowkey
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ kmod,
+ udev,
+ xkb-data
+Recommends:
+ libx11-6,
+ libxfixes3,
+ qt6-wayland,
+ qt6-gtk-platformtheme
+Description: Vietnamese Input Method for Linux Wayland and X11
+ VNSnowKey is a Vietnamese Input Method (BambooEngine core, evdev + uinput +
+ XKB 8-level overlay) supporting KDE Plasma, GNOME, Hyprland, Sway, and X11
+ sessions.

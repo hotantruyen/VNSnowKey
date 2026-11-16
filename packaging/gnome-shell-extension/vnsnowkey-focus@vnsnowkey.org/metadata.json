@@ -1,0 +1,8 @@
+{
+  "uuid": "vnsnowkey-focus@vnsnowkey.org",
+  "name": "VNSnowKey Window Focus Bridge",
+  "description": "Reports active window focus and cursor visibility changes over D-Bus to the VNSnowKey Vietnamese Input Method daemon.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51", "52"],
+  "url": "https://github.com/vnsnowkey/vnsnowkey",
+  "version": 1
+}

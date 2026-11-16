@@ -1,0 +1,15 @@
+[Unit]
+Description=VNSnowKey System Tray & Settings Service
+Documentation=https://github.com/vnsnowkey/vnsnowkey
+PartOf=graphical-session.target
+After=graphical-session.target vnsnowkeyd.service
+Wants=vnsnowkeyd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vnsnowkey-gui --tray
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

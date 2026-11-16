@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) -j$$(nproc) PREFIX=/usr all
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	QT_QPA_PLATFORM=offscreen $(MAKE) test
+endif
+
+override_dh_auto_install:
+	$(MAKE) DESTDIR=$(CURDIR)/debian/vnsnowkey PREFIX=/usr install
+	rm -f $(CURDIR)/debian/vnsnowkey/usr/share/licenses/vnsnowkey/LICENSE
+	rm -f $(CURDIR)/debian/vnsnowkey/usr/share/licenses/vnsnowkey/CREDITS
+	rmdir --ignore-fail-on-non-empty $(CURDIR)/debian/vnsnowkey/usr/share/licenses/vnsnowkey $(CURDIR)/debian/vnsnowkey/usr/share/licenses || true
+
+override_dh_auto_clean:
+	$(MAKE) clean

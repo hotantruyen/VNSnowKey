@@ -1,0 +1,119 @@
+# Hướng dẫn cài đặt VNSnowKey (`1.0.0`)
+
+VNSnowKey là bộ gõ Tiếng Việt cho Linux Wayland và X11, hỗ trợ **KDE Plasma, GNOME, Hyprland, Sway và X11**.
+
+---
+
+## 1. Cài nhanh tự động (tùy chọn)
+
+Từ bên trong thư mục `dist/`, có thể chạy script tự nhận diện distro và cài đặt trọn bộ:
+
+```bash
+./install.sh
+```
+
+Xem trước lệnh sẽ chạy mà không thay đổi hệ thống: `./install.sh --dry-run`.
+
+---
+
+## 2. Kiểm tra file tải về (tuỳ chọn)
+
+Nếu chạy trong thư mục `dist/` chứa file `SHA256SUMS`:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+---
+
+## 3. Lệnh cài đặt thủ công theo từng distro
+
+> Chạy các lệnh dưới đây ngay bên trong thư mục `dist/` (hoặc thay đường dẫn tương ứng tới file gói).
+
+### Arch Linux (Arch, CachyOS, EndeavourOS, Manjaro)
+```bash
+sudo pacman -U archlinux/vnsnowkey-1.0.0-x86_64.pkg.tar.zst
+```
+*(Nếu đang cài bản test `1.0.0-6` cũ hơn trước đó, `pacman` có thể hỏi xác nhận hạ về `1.0.0-1` — nhấn `y` để tiếp tục.)*
+
+### Ubuntu / Debian (Ubuntu 24.04+, Debian 12+, Linux Mint, Pop!_OS, KDE Neon)
+```bash
+sudo apt update
+sudo apt install --reinstall ./debian-ubuntu/vnsnowkey_1.0.0_amd64.deb
+```
+> Lưu ý giữ `./` ở đầu đường dẫn để `apt` hiểu là cài file cục bộ và tự tải các thư viện Qt6 phụ thuộc (`--reinstall` giúp cài đè được cả khi máy đang có sẵn bản `1.0.0` trước đó).
+
+### Fedora (Fedora 41+)
+```bash
+# Cài lần đầu hoặc nâng cấp lên bản mới:
+sudo dnf install ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+
+# Hoặc cài đè lại khi máy đã cài đúng cùng phiên bản:
+sudo dnf reinstall ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+```
+
+### openSUSE Tumbleweed
+```bash
+sudo zypper install --allow-unsigned-rpm --force ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+```
+*(Cần cờ `--allow-unsigned-rpm` khi cài file `.rpm` nội bộ chưa ký GPG key công khai.)*
+
+---
+
+## 4. Kích hoạt quyền `/dev/uinput` và dịch vụ nền (lần đầu cài)
+
+Trên **mọi distro**, thực hiện 1 lần sau khi cài gói:
+
+```bash
+sudo modprobe uinput
+sudo usermod -aG input "$USER"
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=misc --subsystem-match=input
+```
+
+Sau đó **đăng xuất (log out) và đăng nhập lại** để nhóm `input` có hiệu lực, rồi bật service chạy ngầm:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now vnsnowkeyd.service vnsnowkey-gui.service
+```
+
+*(Nếu nâng cấp từ bản cũ trên máy đang chạy, chỉ cần restart lại service:)*
+```bash
+systemctl --user restart vnsnowkeyd.service vnsnowkey-gui.service
+```
+
+---
+
+## 5. Thiết lập bổ sung theo từng Desktop Environment
+
+* **KDE Plasma (Wayland)**:
+  1. Mở **System Settings → Keyboard → Virtual Keyboard → chọn `VNSnowKey`** (dùng cho cầu `vnsnowkey-im` và chuyển đổi bàn phím ảo).
+  2. Nếu icon ngoài menu ứng dụng chưa cập nhật ngay: `kbuildsycoca6 --noincremental`.
+* **GNOME (Wayland)**:
+  1. Bật extension đọc cửa sổ đang focus (đã được gói sẵn cùng app) và hỗ trợ khay hệ thống (trên Fedora Workstation, gói `.rpm` sẽ tự đề xuất cài `gnome-shell-extension-appindicator`; nếu cài thủ công hoặc bị thiếu thì cài thêm qua `dnf`):
+     ```bash
+     # Trên Fedora Workstation (nếu chưa có icon V/E ở thanh trên):
+     sudo dnf install gnome-shell-extension-appindicator
+     gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+
+     # Bật extension theo dõi cửa sổ cho Game Mode / per-app:
+     gnome-extensions enable vnsnowkey-focus@vnsnowkey.org
+     ```
+  2. **Đăng xuất và đăng nhập lại** 1 lần để GNOME Shell nạp cả 2 extension mới (sau đó chạy `systemctl --user restart vnsnowkeyd vnsnowkey-gui` nếu service đã bật từ trước).
+* **Hyprland / Sway**: Tự động nhận cửa sổ focus qua IPC gốc và dùng StatusNotifier trên thanh bar (`waybar`, v.v.).
+* **X11**: Tự động chạy ngay qua X11 và khay hệ thống Qt6.
+
+---
+
+## 6. Kiểm tra trạng thái & Gỡ cài đặt
+
+Kiểm tra chẩn đoán nhanh (uinput, nhóm `input`, Wayland/X11, XKB overlay):
+```bash
+vnsnowkey ctl doctor
+```
+
+Gỡ cài đặt khi cần:
+* **Arch Linux**: `sudo pacman -Rns vnsnowkey`
+* **Ubuntu / Debian**: `sudo apt remove vnsnowkey`
+* **Fedora**: `sudo dnf remove vnsnowkey`
+* **openSUSE**: `sudo zypper remove vnsnowkey`

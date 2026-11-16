@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=VNSnowKey
+GenericName=Vietnamese Input Method
+Comment=Vietnamese Input Method (Wayland Virtual Keyboard Signal Bridge)
+Exec=vnsnowkey-im
+Icon=vnsnowkey
+Type=Application
+NoDisplay=true
+X-KDE-Wayland-VirtualKeyboard=true

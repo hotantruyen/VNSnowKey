@@ -1,0 +1,62 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    rm -f /etc/xdg/autostart/org.vnsnowkey.Autostart.desktop
+    rm -f /etc/udev/rules.d/99-vnsnowkey-uinput.rules /usr/lib/udev/rules.d/99-vnsnowkey-uinput.rules
+    if [ -e /proc/modules ] && command -v modprobe >/dev/null 2>&1; then
+        modprobe uinput >/dev/null 2>&1 || true
+    fi
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+    udevadm trigger --subsystem-match=misc --action=change >/dev/null 2>&1 || true
+    udevadm trigger --subsystem-match=input --action=change >/dev/null 2>&1 || true
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] && id "${SUDO_USER}" >/dev/null 2>&1; then
+        if ! id -nG "${SUDO_USER}" | tr ' ' '\n' | grep -qx "input"; then
+            usermod -aG input "${SUDO_USER}" >/dev/null 2>&1 || true
+        fi
+        SUDO_UID="$(id -u "${SUDO_USER}" 2>/dev/null || true)"
+        if [ -n "${SUDO_UID}" ] && [ -S "/run/user/${SUDO_UID}/bus" ]; then
+            if command -v gnome-extensions >/dev/null 2>&1; then
+                runuser -u "${SUDO_USER}" -- env \
+                    XDG_RUNTIME_DIR="/run/user/${SUDO_UID}" \
+                    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${SUDO_UID}/bus" \
+                    gnome-extensions enable vnsnowkey-focus@vnsnowkey.org >/dev/null 2>&1 || true
+            fi
+            if command -v gsettings >/dev/null 2>&1; then
+                _cur_exts="$(runuser -u "${SUDO_USER}" -- env \
+                    XDG_RUNTIME_DIR="/run/user/${SUDO_UID}" \
+                    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${SUDO_UID}/bus" \
+                    gsettings get org.gnome.shell enabled-extensions 2>/dev/null || true)"
+                _new_exts=""
+                case "${_cur_exts}" in
+                    *"'vnsnowkey-focus@vnsnowkey.org'"*) ;;
+                    "@as []"|"[]") _new_exts="['vnsnowkey-focus@vnsnowkey.org']" ;;
+                    *"['"*"]"*) _new_exts="${_cur_exts%]}, 'vnsnowkey-focus@vnsnowkey.org']" ;;
+                esac
+                if [ -n "${_new_exts}" ]; then
+                    runuser -u "${SUDO_USER}" -- env \
+                        XDG_RUNTIME_DIR="/run/user/${SUDO_UID}" \
+                        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${SUDO_UID}/bus" \
+                        gsettings set org.gnome.shell enabled-extensions "${_new_exts}" >/dev/null 2>&1 || true
+                fi
+                runuser -u "${SUDO_USER}" -- env \
+                    XDG_RUNTIME_DIR="/run/user/${SUDO_UID}" \
+                    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${SUDO_UID}/bus" \
+                    gsettings set org.gnome.shell disable-user-extensions false >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+    echo "==> VNSnowKey has been installed."
+    echo "==> 1. Ensure kernel module 'uinput' is loaded and add your user to 'input':"
+    echo "       sudo modprobe uinput"
+    echo "       sudo usermod -aG input \$USER"
+    echo "==> 2. Log out and back in (if just added to 'input'), then start user services:"
+    echo "       systemctl --user daemon-reload"
+    echo "       systemctl --user enable --now vnsnowkeyd.service vnsnowkey-gui.service"
+    echo "==> 3. Desktop-specific extras:"
+    echo "       - GNOME Wayland: gnome-extensions enable vnsnowkey-focus@vnsnowkey.org"
+    echo "       - KDE Plasma:    System Settings -> Keyboard -> Virtual Keyboard -> VNSnowKey"
+fi
+
+#DEBHELPER#
+exit 0

@@ -1,0 +1,22 @@
+post_install() {
+  rm -f /etc/xdg/autostart/org.vnsnowkey.Autostart.desktop
+  rm -f /etc/udev/rules.d/99-vnsnowkey-uinput.rules /usr/lib/udev/rules.d/99-vnsnowkey-uinput.rules
+  udevadm control --reload-rules >/dev/null 2>&1 || true
+  udevadm trigger --subsystem-match=misc --action=change >/dev/null 2>&1 || true
+  udevadm trigger --subsystem-match=input --action=change >/dev/null 2>&1 || true
+  echo "==> VNSnowKey has been installed."
+  echo "==> 1. Reload udev rules and ensure the uinput module is loaded:"
+  echo "       sudo modprobe uinput"
+  echo "       sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=misc --subsystem-match=input"
+  echo "==> 2. Ensure your user is in the 'input' group:"
+  echo "       sudo usermod -aG input \$USER"
+  echo "==> 3. VNSnowKey uses systemd user services as its ONLY autostart mechanism:"
+  echo "       systemctl --user daemon-reload"
+  echo "       systemctl --user enable --now vnsnowkeyd.service vnsnowkey-gui.service"
+  echo "==> Note: If upgrading from an older version, remove any legacy ~/.config/autostart/org.vnsnowkey.Autostart.desktop"
+  echo "          to avoid duplicate autostart entries (vnsnowkey-gui also removes it automatically on launch)."
+}
+
+post_upgrade() {
+  post_install
+}

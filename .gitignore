@@ -1,0 +1,24 @@
+# Build & packaging outputs
+build/
+pkg/
+dist/
+*.pkg.tar.zst
+*.deb
+*.rpm
+*.tar.gz
+
+# Debian dpkg-buildpackage artifacts
+debian/.debhelper/
+debian/files
+debian/vnsnowkey/
+debian/*.substvars
+debian/*.log
+
+# Compiled objects / temporary artifacts
+*.o
+*.so
+*.a
+*.user
+.vscode/
+.idea/
+.DS_Store

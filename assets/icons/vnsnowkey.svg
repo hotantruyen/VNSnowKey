@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="vnsnowkey-bg" x1="0.1" y1="0.05" x2="0.9" y2="0.95">
+      <stop offset="0%" stop-color="#190e42"/>
+      <stop offset="50%" stop-color="#27176c"/>
+      <stop offset="100%" stop-color="#4126aa"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="256" height="256" rx="58" ry="58" fill="url(#vnsnowkey-bg)"/>
+  <polygon points="161.0,70.8 144.9,84.7 144.0,100.3" fill="#c9bcff"/>
+  <polygon points="161.0,70.8 157.1,91.7 144.0,100.3" fill="#8d7df0"/>
+  <polygon points="194.0,128.0 174.0,121.0 160.0,128.0" fill="#c9bcff"/>
+  <polygon points="194.0,128.0 174.0,135.0 160.0,128.0" fill="#8d7df0"/>
+  <polygon points="161.0,185.2 157.1,164.3 144.0,155.7" fill="#c9bcff"/>
+  <polygon points="161.0,185.2 144.9,171.3 144.0,155.7" fill="#8d7df0"/>
+  <polygon points="95.0,185.2 111.1,171.3 112.0,155.7" fill="#c9bcff"/>
+  <polygon points="95.0,185.2 98.9,164.3 112.0,155.7" fill="#8d7df0"/>
+  <polygon points="62.0,128.0 82.0,135.0 96.0,128.0" fill="#c9bcff"/>
+  <polygon points="62.0,128.0 82.0,121.0 96.0,128.0" fill="#8d7df0"/>
+  <polygon points="95.0,70.8 98.9,91.7 112.0,100.3" fill="#c9bcff"/>
+  <polygon points="95.0,70.8 111.1,84.7 112.0,100.3" fill="#8d7df0"/>
+  <polygon points="128.0,38.0 114.0,82.0 128.0,100.0" fill="#ffffff"/>
+  <polygon points="128.0,38.0 142.0,82.0 128.0,100.0" fill="#9fd8ff"/>
+  <polygon points="205.9,83.0 160.8,92.9 152.2,114.0" fill="#ffffff"/>
+  <polygon points="205.9,83.0 174.8,117.1 152.2,114.0" fill="#9fd8ff"/>
+  <polygon points="205.9,173.0 174.8,138.9 152.2,142.0" fill="#ffffff"/>
+  <polygon points="205.9,173.0 160.8,163.1 152.2,142.0" fill="#9fd8ff"/>
+  <polygon points="128.0,218.0 142.0,174.0 128.0,156.0" fill="#ffffff"/>
+  <polygon points="128.0,218.0 114.0,174.0 128.0,156.0" fill="#9fd8ff"/>
+  <polygon points="50.1,173.0 95.2,163.1 103.8,142.0" fill="#ffffff"/>
+  <polygon points="50.1,173.0 81.2,138.9 103.8,142.0" fill="#9fd8ff"/>
+  <polygon points="50.1,83.0 81.2,117.1 103.8,114.0" fill="#ffffff"/>
+  <polygon points="50.1,83.0 95.2,92.9 103.8,114.0" fill="#9fd8ff"/>
+  <polygon points="128.0,103.0 149.7,115.5 149.7,140.5 128.0,153.0 106.3,140.5 106.3,115.5" fill="#ffffff"/>
+  <polygon points="128.0,117.0 137.5,122.5 137.5,133.5 128.0,139.0 118.5,133.5 118.5,122.5" fill="#4527b5"/>
+</svg>
