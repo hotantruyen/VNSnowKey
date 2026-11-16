@@ -27,9 +27,12 @@ VNSnowKey đọc phím vật lý trực tiếp từ nhân Linux qua **`evdev` (`
 
 ---
 
-## Cài đặt nhanh từ gói phát hành (`dist/`)
+## Cài đặt nhanh từ gói phát hành ([Releases](https://github.com/hotantruyen/VNSnowKey/releases))
 
-Nếu bạn tải gói build sẵn, vào thư mục `dist/` và chạy trình cài đặt tự động (nhận diện Arch, Debian/Ubuntu, Fedora, openSUSE):
+> Thư mục `dist/` không nằm sẵn trong kho Git (được loại trừ trong `.gitignore`). Để cài nhanh không cần tự biên dịch, hãy tải bộ cài sẵn từ trang **GitHub Releases**.
+
+1. Vào [Releases](https://github.com/hotantruyen/VNSnowKey/releases), tải gói phù hợp distro của bạn (`.pkg.tar.zst` cho Arch, `.deb` cho Ubuntu/Debian, `.rpm` cho Fedora/openSUSE) cùng tệp `install.sh` vào **cùng một thư mục**.
+2. Chạy trình cài đặt tự động:
 
 ```bash
 chmod +x install.sh
@@ -40,17 +43,22 @@ Xem chi tiết lệnh cài đặt thủ công theo từng distro tại [docs/INS
 
 ---
 
-## Build từ mã nguồn & Chạy kiểm thử
+## Clone mã nguồn, Build & Chạy kiểm thử
 
-### 1. Cài các thư viện phụ thuộc
+### 1. Clone repo và cài thư viện phụ thuộc
+
+```bash
+git clone https://github.com/hotantruyen/VNSnowKey.git
+cd VNSnowKey
+```
 
 - **Arch Linux**: `gcc make pkgconf libevdev libxkbcommon qt6-base qt6-svg kstatusnotifieritem systemd wayland dbus libx11 libxfixes`
 - **Ubuntu / Debian**: `build-essential pkg-config libevdev-dev libxkbcommon-dev qt6-base-dev qt6-svg-dev libsystemd-dev libwayland-dev wayland-scanner++ dbus libx11-dev libxfixes-dev`
 - **Fedora**: `gcc-c++ make pkgconf libevdev-devel libxkbcommon-devel qt6-qtbase-devel qt6-qtsvg-devel systemd-devel wayland-devel libX11-devel libXfixes-devel dbus-daemon`
 
-*(Lưu ý: Khi build trên hệ thống không có `KF6StatusNotifierItem` như Ubuntu/Debian/Fedora, thêm cờ `HAVE_KF6_SNI=0`.)*
+*(Lưu ý: Khi build trên hệ thống không có `KF6StatusNotifierItem` như Ubuntu/Debian/Fedora, `Makefile` sẽ tự động chuyển sang nhánh fallback `HAVE_KF6_SNI=0`.)*
 
-### 2. Biên dịch, kiểm thử và cài đặt
+### 2. Biên dịch, kiểm thử và cài đặt từ source
 
 ```bash
 make -j$(nproc) all
@@ -58,11 +66,7 @@ QT_QPA_PLATFORM=offscreen make test
 sudo make install PREFIX=/usr
 ```
 
-Đóng gói toàn bộ `.pkg.tar.zst`, `.deb`, `.rpm` vào `dist/`:
-
-```bash
-./packaging/build-release.sh
-```
+*(Trên Arch Linux có thể đóng gói & cài trực tiếp bằng `makepkg -si`. Hoặc nếu muốn build toàn bộ gói `.pkg.tar.zst`, `.deb`, `.rpm` vào thư mục `dist/` cục bộ — cần `makepkg` + `podman`/`docker` — chạy `./packaging/build-release.sh` rồi `./dist/install.sh`.)*
 
 ---
 

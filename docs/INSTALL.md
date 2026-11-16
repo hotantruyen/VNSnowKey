@@ -4,11 +4,14 @@ VNSnowKey là bộ gõ Tiếng Việt cho Linux Wayland và X11, hỗ trợ **KD
 
 ---
 
-## 1. Cài nhanh tự động (tùy chọn)
+## 1. Cài nhanh tự động (từ GitHub Releases hoặc `dist/` đã build)
 
-Từ bên trong thư mục `dist/`, có thể chạy script tự nhận diện distro và cài đặt trọn bộ:
+> Nếu bạn `git clone` từ kho mã nguồn, thư mục `dist/` không có sẵn (do nằm trong `.gitignore`). Bạn có thể tải bộ cài build sẵn từ trang **GitHub Releases** hoặc tự build `dist/` bằng `./packaging/build-release.sh` (hoặc cài trực tiếp từ mã nguồn theo hướng dẫn ở [`README.md`](../README.md)).
+
+Đặt tệp gói cài đặt (`.pkg.tar.zst` / `.deb` / `.rpm`) cùng tệp `install.sh` trong **cùng một thư mục** (hoặc đứng trong `dist/` vừa build xong) rồi chạy:
 
 ```bash
+chmod +x install.sh
 ./install.sh
 ```
 
@@ -16,9 +19,7 @@ Xem trước lệnh sẽ chạy mà không thay đổi hệ thống: `./install.
 
 ---
 
-## 2. Kiểm tra file tải về (tuỳ chọn)
-
-Nếu chạy trong thư mục `dist/` chứa file `SHA256SUMS`:
+## 2. Kiểm tra checksum (khi chạy trong `dist/` hoặc có `SHA256SUMS`)
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
@@ -28,33 +29,32 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ## 3. Lệnh cài đặt thủ công theo từng distro
 
-> Chạy các lệnh dưới đây ngay bên trong thư mục `dist/` (hoặc thay đường dẫn tương ứng tới file gói).
+> Chạy các lệnh dưới đây ngay trong thư mục chứa file gói tải về từ Releases (hoặc thay bằng đường dẫn tới file trong `dist/`, ví dụ `archlinux/...`, `debian-ubuntu/...`, `fedora-opensuse/...`).
 
 ### Arch Linux (Arch, CachyOS, EndeavourOS, Manjaro)
 ```bash
-sudo pacman -U archlinux/vnsnowkey-1.0.0-x86_64.pkg.tar.zst
+sudo pacman -U vnsnowkey-1.0.0-x86_64.pkg.tar.zst
 ```
-*(Nếu đang cài bản test `1.0.0-6` cũ hơn trước đó, `pacman` có thể hỏi xác nhận hạ về `1.0.0-1` — nhấn `y` để tiếp tục.)*
 
 ### Ubuntu / Debian (Ubuntu 24.04+, Debian 12+, Linux Mint, Pop!_OS, KDE Neon)
 ```bash
 sudo apt update
-sudo apt install --reinstall ./debian-ubuntu/vnsnowkey_1.0.0_amd64.deb
+sudo apt install --reinstall ./vnsnowkey_1.0.0_amd64.deb
 ```
 > Lưu ý giữ `./` ở đầu đường dẫn để `apt` hiểu là cài file cục bộ và tự tải các thư viện Qt6 phụ thuộc (`--reinstall` giúp cài đè được cả khi máy đang có sẵn bản `1.0.0` trước đó).
 
 ### Fedora (Fedora 41+)
 ```bash
 # Cài lần đầu hoặc nâng cấp lên bản mới:
-sudo dnf install ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+sudo dnf install ./vnsnowkey-1.0.0-x86_64.rpm
 
 # Hoặc cài đè lại khi máy đã cài đúng cùng phiên bản:
-sudo dnf reinstall ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+sudo dnf reinstall ./vnsnowkey-1.0.0-x86_64.rpm
 ```
 
 ### openSUSE Tumbleweed
 ```bash
-sudo zypper install --allow-unsigned-rpm --force ./fedora-opensuse/vnsnowkey-1.0.0-x86_64.rpm
+sudo zypper install --allow-unsigned-rpm --force ./vnsnowkey-1.0.0-x86_64.rpm
 ```
 *(Cần cờ `--allow-unsigned-rpm` khi cài file `.rpm` nội bộ chưa ký GPG key công khai.)*
 
