@@ -29,9 +29,7 @@ VNSnowKey đọc phím vật lý trực tiếp từ nhân Linux qua **`evdev` (`
 
 ## Cài đặt nhanh từ gói phát hành ([Releases](https://github.com/hotantruyen/VNSnowKey/releases))
 
-> Thư mục `dist/` không nằm sẵn trong kho Git (được loại trừ trong `.gitignore`). Để cài nhanh không cần tự biên dịch, hãy tải bộ cài sẵn từ trang **GitHub Releases**.
-
-1. Vào [Releases](https://github.com/hotantruyen/VNSnowKey/releases), tải gói phù hợp distro của bạn (`.pkg.tar.zst` cho Arch, `.deb` cho Ubuntu/Debian, `.rpm` cho Fedora/openSUSE) cùng tệp `install.sh` vào **cùng một thư mục**.
+1. Vào trang [Releases](https://github.com/hotantruyen/VNSnowKey/releases), tải gói phù hợp distro của bạn (`.pkg.tar.zst` cho Arch, `.deb` cho Ubuntu/Debian, `.rpm` cho Fedora/openSUSE) cùng tệp `install.sh` vào **cùng một thư mục**.
 2. Chạy trình cài đặt tự động:
 
 ```bash

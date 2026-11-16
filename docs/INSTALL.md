@@ -4,11 +4,9 @@ VNSnowKey là bộ gõ Tiếng Việt cho Linux Wayland và X11, hỗ trợ **KD
 
 ---
 
-## 1. Cài nhanh tự động (từ GitHub Releases hoặc `dist/` đã build)
+## 1. Cài nhanh tự động (từ GitHub Releases)
 
-> Nếu bạn `git clone` từ kho mã nguồn, thư mục `dist/` không có sẵn (do nằm trong `.gitignore`). Bạn có thể tải bộ cài build sẵn từ trang **GitHub Releases** hoặc tự build `dist/` bằng `./packaging/build-release.sh` (hoặc cài trực tiếp từ mã nguồn theo hướng dẫn ở [`README.md`](../README.md)).
-
-Đặt tệp gói cài đặt (`.pkg.tar.zst` / `.deb` / `.rpm`) cùng tệp `install.sh` trong **cùng một thư mục** (hoặc đứng trong `dist/` vừa build xong) rồi chạy:
+Tải tệp gói cài đặt phù hợp distro (`.pkg.tar.zst` / `.deb` / `.rpm`) cùng tệp `install.sh` về **cùng một thư mục** (hoặc đứng trong thư mục `dist/` sau khi tự chạy `./packaging/build-release.sh`) rồi chạy:
 
 ```bash
 chmod +x install.sh
