@@ -1,5 +1,5 @@
 /*
- * VNSnowKey - Vietnamese Input Method for Arch Linux + KDE Plasma (Wayland)
+ * VNSnowKey - Vietnamese Input Method for Linux (Wayland & X11)
  * Automated D-Bus Single-Instance & Single Tray Icon Verification Test
  * Copyright (C) 2026 VNSnowKey Contributors
  *

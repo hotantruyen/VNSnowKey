@@ -1,5 +1,5 @@
 /*
- * VNSnowKey - Vietnamese Input Method for Arch Linux + KDE Plasma (Wayland)
+ * VNSnowKey - Vietnamese Input Method for Linux (Wayland & X11)
  * Engine derived from BambooEngine (bamboo-core)
  * Copyright (C) 2018 Luong Thanh Lam <ltlam93@gmail.com> (MIT License)
  * Copyright (C) 2026 VNSnowKey Contributors

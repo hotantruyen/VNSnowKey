@@ -1,5 +1,5 @@
 /*
- * VNSnowKey - Vietnamese Input Method for Linux Wayland and X11
+ * VNSnowKey - Vietnamese Input Method for Linux (Wayland & X11)
  * Copyright (C) 2026 VNSnowKey Contributors
  *
  * SPDX-License-Identifier: GPL-3.0-or-later

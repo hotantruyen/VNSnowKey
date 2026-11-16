@@ -6,19 +6,19 @@
 
 ## 1. Kiến trúc Tổng thể
 
-VNSnowKey được tách thành 3 tiến trình riêng biệt giao tiếp qua **Session D-Bus (`org.vnsnowkey.Daemon`)**:
+VNSnowKey được tách thành các tiến trình riêng biệt giao tiếp qua **Session D-Bus (`org.vnsnowkey.Daemon`)**:
 
 1. **`vnsnowkeyd` (Core Input Daemon)**:
    - Chạy dưới quyền user thuộc nhóm `input` (systemd user unit `vnsnowkeyd.service`).
-   - **`EvdevCapture`** (`src/input/evdev_capture.cpp`): Quét `/dev/input/event*`, theo dõi cắm nóng thiết bị qua `inotify`, đợi toàn bộ phím vật lý nhả hết (`EVIOCGKEY`) rồi mới chiếm quyền độc quyền bàn phím bằng `ioctl(fd, EVIOCGRAB, 1)`. Đồng thời mở các thiết bị chuột ở chế độ không chiếm quyền (passive read) để bắt sự kiện click chuột (`BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`) phục vụ xoá bộ đệm từ.
+   - **`EvdevCapture`** (`src/input/evdev_capture.cpp`): Quét `/dev/input/event*`, theo dõi cắm nóng thiết bị qua `inotify`, đợi toàn bộ phím vật lý nhả hết (`EVIOCGKEY`) rồi mới chiếm quyền độc quyền bàn phím bằng `ioctl(fd, EVIOCGRAB, 1)`. Đồng thời mở các thiết bị chuột ở chế độ không chiếm quyền (passive read) để bắt sự kiện click chuột (`BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`) phục vụ xử lý bộ đệm từ (và bảo vệ hậu-click khi tắt `reset_on_mouse_click`).
    - **`BambooEngine` & `SessionProcessor`** (`src/engine/`): Xử lý âm tiết tiếng Việt theo đúng thuật toán và bảng luật của **BambooEngine (`bamboo-core`)**, tính toán chênh lệch (`KeyActionDiff`: số lần `Backspace` + chuỗi ký tự mới cần phát).
    - **`UinputEmitter` & `XkbOverlay`** (`src/output/`): Phát tổ hợp `Backspace` + ký tự tiếng Việt ra bàn phím ảo `VNSnowKey Virtual Keyboard` (`/dev/uinput`) trong cùng một chuỗi sự kiện nguyên tử (`SYN_REPORT`).
-   - **`FocusTracker`** (`src/focus/focus_tracker.cpp`): Nạp động KWin 6 Script (`packaging/kwin-script/vnsnowkey-focus.js`) vào `org.kde.KWin /Scripting` để nhận tín hiệu D-Bus tức thời mỗi khi người dùng đổi cửa sổ đang active (`resourceClass`, `caption`).
-2. **`vnsnowkey-gui` (Qt6 Settings & KDE StatusNotifierItem Tray)**:
-   - Hiển thị biểu tượng chữ **`V`** / **`E`** đơn sắc (monochrome) trên khay hệ thống KDE Plasma thông qua `KStatusNotifierItem`, tự động đổi màu trắng/đen theo theme sáng/tối của Plasma.
-   - Cung cấp cửa sổ cài đặt Qt6 gồm 7 trang, áp dụng thay đổi tức thời (**Hot-Reload**) qua D-Bus mà không cần khởi động lại daemon.
-3. **`vnsnowkey` (CLI Controller)**:
-   - Công cụ dòng lệnh (`vnsnowkey ctl toggle|vi|en|status|reload|panic|resume|im|charset|convert|convert-clipboard|backup|restore|doctor`) để người dùng gán vào phím tắt toàn cục của KDE hoặc script tự động hoá.
+   - **`FocusTracker` & `GameModeMonitor`** (`src/focus/`): Theo dõi cửa sổ đang focus trên KDE Plasma (KWin Script `packaging/kwin-script/vnsnowkey-focus.js`), GNOME Shell (extension `vnsnowkey-focus@vnsnowkey.org`), Hyprland, Sway và X11; kết hợp giám sát con trỏ / trạng thái text-input cho **Game Mode** (ví dụ Minecraft).
+2. **`vnsnowkey-gui` (Qt6 Settings & System Tray)**:
+   - Hiển thị biểu tượng chữ **`V`** / **`E`** trên khay hệ thống qua `KStatusNotifierItem` (KDE) hoặc `QSystemTrayIcon` (GNOME AppIndicator / các desktop khác).
+   - Cung cấp cửa sổ cài đặt Qt6 gồm **6 trang** (`Chung & Kiểu gõ`, `Phím tắt`, `Ứng dụng`, `Macro & Mã chữ`, `Nâng cao`, `Chẩn đoán`), áp dụng thay đổi tức thời (**Hot-Reload**) qua D-Bus mà không cần khởi động lại daemon.
+3. **`vnsnowkey` (CLI Controller)** & **`vnsnowkey-im` (Wayland Virtual Keyboard Signal Bridge)**:
+   - `vnsnowkey ctl ...` điều khiển daemon hoặc chẩn đoán hệ thống (`doctor`); `vnsnowkey-im` hỗ trợ cầu nối tín hiệu bàn phím ảo Wayland (`zwp_input_method_v1`) khi cần.
 
 ```
 ┌───────────────────────────┐       inotify + EVIOCGKEY + EVIOCGRAB

@@ -1,6 +1,6 @@
 [Unit]
 Description=VNSnowKey Vietnamese Input Method Daemon (Wayland / X11)
-Documentation=https://github.com/vnsnowkey/vnsnowkey
+Documentation=https://github.com/hotantruyen/VNSnowKey
 PartOf=graphical-session.target
 After=graphical-session.target
 

@@ -1,5 +1,5 @@
 /*
- * VNSnowKey - Vietnamese Input Method for Arch Linux + KDE Plasma (Wayland)
+ * VNSnowKey - Vietnamese Input Method for Linux (Wayland & X11)
  * End-to-End Daemon, D-Bus CLI, Global Shortcut, Mouse/Nav Reset & Clean Exit Integration Test
  * Copyright (C) 2026 VNSnowKey Contributors
  *

@@ -6,7 +6,7 @@ Release:        1
 Summary:        Vietnamese Input Method for Linux Wayland and X11
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/vnsnowkey/vnsnowkey
+URL:            https://github.com/hotantruyen/VNSnowKey
 Source0:        vnsnowkey-%{version}.tar.gz
 
 BuildRequires:  gcc

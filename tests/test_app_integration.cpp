@@ -1,5 +1,5 @@
 /*
- * VNSnowKey - Vietnamese Input Method for Arch Linux + KDE Plasma (Wayland)
+ * VNSnowKey - Vietnamese Input Method for Linux (Wayland & X11)
  * Multi-Application Widget, Browser URL Bar Autocomplete, GUI Settings & KWin D-Bus Integration Test
  * Copyright (C) 2026 VNSnowKey Contributors
  *

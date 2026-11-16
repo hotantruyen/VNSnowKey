@@ -4,7 +4,7 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc="Vietnamese Input Method (BambooEngine core, evdev + uinput) for Linux Wayland and X11 (KDE, GNOME, Hyprland, Sway)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/vnsnowkey/vnsnowkey"
+url="https://github.com/hotantruyen/VNSnowKey"
 license=('GPL-3.0-or-later')
 depends=(
   'gcc-libs'

@@ -51,8 +51,8 @@ cd VNSnowKey
 ```
 
 - **Arch Linux**: `gcc make pkgconf libevdev libxkbcommon qt6-base qt6-svg kstatusnotifieritem systemd wayland dbus libx11 libxfixes`
-- **Ubuntu / Debian**: `build-essential pkg-config libevdev-dev libxkbcommon-dev qt6-base-dev qt6-svg-dev libsystemd-dev libwayland-dev wayland-scanner++ dbus libx11-dev libxfixes-dev`
-- **Fedora**: `gcc-c++ make pkgconf libevdev-devel libxkbcommon-devel qt6-qtbase-devel qt6-qtsvg-devel systemd-devel wayland-devel libX11-devel libXfixes-devel dbus-daemon`
+- **Ubuntu / Debian**: `build-essential pkgconf libevdev-dev libxkbcommon-dev qt6-base-dev qt6-svg-dev libsystemd-dev libwayland-dev libwayland-bin dbus`
+- **Fedora**: `gcc-c++ make pkgconf libevdev-devel libxkbcommon-devel qt6-qtbase-devel qt6-qtsvg-devel systemd-devel wayland-devel dbus-daemon`
 
 *(Lưu ý: Khi build trên hệ thống không có `KF6StatusNotifierItem` như Ubuntu/Debian/Fedora, `Makefile` sẽ tự động chuyển sang nhánh fallback `HAVE_KF6_SNI=0`.)*
 
