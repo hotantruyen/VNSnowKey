@@ -853,16 +853,6 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
         if (!gameGameplayPassThrough) {
             processor_.reset();
         }
-        if (gameGameplayPassThrough && !appExcluded && config_.vietnameseEnabled &&
-            !safeMode_.load() && value == 1 && !anyCtrl && !anyAlt && !anyMeta && !anyShift &&
-            (code == KEY_T || code == KEY_SLASH)) {
-            if (!gameSignalControlled_.load(std::memory_order_acquire)) {
-                gameChatActive_.store(true, std::memory_order_release);
-                processor_.reset();
-            } else if (onGameChatKey_) {
-                onGameChatKey_(false, true);
-            }
-        }
         forwardedKeys_.set(code, true);
         emitter_.forwardKeyEvent(code, value);
         return;
@@ -877,7 +867,7 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
         if (!gameSignalControlled_.load(std::memory_order_acquire)) {
             gameChatActive_.store(false, std::memory_order_release);
         } else if (onGameChatKey_) {
-            onGameChatKey_(true, false);
+            onGameChatKey_(true);
         }
         if (!gameChatActive_.load(std::memory_order_acquire)) {
             pendingProcessorReset_.store(false, std::memory_order_relaxed);
@@ -894,7 +884,7 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
     // 7. Handle Backspace
     if (code == KEY_BACKSPACE) {
         if (isGameMode && gameChatActive_.load(std::memory_order_acquire) && value == 1 && onGameChatKey_) {
-            onGameChatKey_(false, false);
+            onGameChatKey_(false);
         }
         const bool hadBufferedWord = !processor_.currentRawKeys().empty();
         const bool hadHistory = processor_.hasUndoableHistory();
@@ -935,7 +925,7 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
                 gameChatActive_.store(false, std::memory_order_release);
                 processor_.reset();
             } else if (onGameChatKey_) {
-                onGameChatKey_(true, true);
+                onGameChatKey_(true);
             }
         } else if (!anyShift && !autocompleteFix &&
             (code == KEY_LEFT || code == KEY_RIGHT || code == KEY_DELETE)) {
@@ -963,7 +953,7 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
     }
     const bool isMovementKey = (code == KEY_W || code == KEY_A || code == KEY_S || code == KEY_D);
     if (isGameMode && gameChatActive_.load(std::memory_order_acquire) && value == 1 && !isMovementKey && onGameChatKey_) {
-        onGameChatKey_(false, false);
+        onGameChatKey_(false);
     }
 
     auto diff = processor_.processPrintableKey(ch);

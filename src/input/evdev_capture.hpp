@@ -61,7 +61,7 @@ public:
     bool isInSafeMode() const { return safeMode_.load(); }
 
     // Callbacks when user triggers hotkey or GameMode chat activity from physical keyboard
-    using GameChatKeyCallback = std::function<void(bool isExitKey, bool wakeupProbe)>;
+    using GameChatKeyCallback = std::function<void(bool isExitKey)>;
     void setOnLanguageToggled(LanguageToggleCallback cb) { onLangToggled_ = std::move(cb); }
     void setOnPanicTriggered(PanicModeCallback cb) { onPanic_ = std::move(cb); }
     void setOnGameChatKey(GameChatKeyCallback cb) { onGameChatKey_ = std::move(cb); }

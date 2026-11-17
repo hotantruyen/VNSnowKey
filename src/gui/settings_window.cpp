@@ -854,7 +854,7 @@ QWidget* SettingsWindow::createAppsPage() {
     tblBox->addWidget(appProfilesTable_, 1);
 
     auto* modeHint = new QLabel(
-        QStringLiteral("Mẹo cột Chế độ (nháy đúp để chọn): game_mode — đi thẳng phím khi chơi 3D; tự bật tiếng Việt khi mở chat/UI (nhận diện con trỏ GNOME/XWayland, Wayland IM bridge, hoặc phím mở chat T / / <-> Enter / Esc)."),
+        QStringLiteral("Mẹo cột Chế độ (nháy đúp để chọn): game_mode — đi thẳng phím khi chơi 3D; tự động bật tiếng Việt khi nhận diện thấy con trỏ hoặc khung nhập liệu mở (GNOME Meta.CursorTracker, XWayland XFixes, KWin TextInput, Wayland IM bridge)."),
         page);
     modeHint->setWordWrap(true);
     modeHint->setObjectName(QStringLiteral("HintLabel"));

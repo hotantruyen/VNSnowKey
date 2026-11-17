@@ -225,8 +225,8 @@ void GameModeMonitor::setDesktopCursorState(bool visible, bool hasSignal) {
         desktopEverSawHiddenCursor_ = false;
         desktopHiddenSinceMs_ = 0;
     } else {
+        const int64_t nowMs = steadyNowMs();
         if (!visible) {
-            int64_t nowMs = steadyNowMs();
             if (desktopHiddenSinceMs_ == 0) {
                 desktopHiddenSinceMs_ = nowMs;
             }
@@ -235,6 +235,9 @@ void GameModeMonitor::setDesktopCursorState(bool visible, bool hasSignal) {
                 snapshot_.cursorExitOverride = false;
             }
         } else {
+            if (desktopHiddenSinceMs_ != 0 && (nowMs - desktopHiddenSinceMs_ >= 300)) {
+                snapshot_.cursorExitOverride = false;
+            }
             desktopHiddenSinceMs_ = 0;
         }
         // Do not let DesktopCursor(true) freeze a GameMode session in chat/UI
@@ -275,18 +278,6 @@ void GameModeMonitor::notifyChatKeystroke(bool isExitKey) {
     }
     int64_t nowMs = steadyNowMs();
     lastChatTypingMs_.store(nowMs > 0 ? nowMs : 1, std::memory_order_relaxed);
-}
-
-void GameModeMonitor::requestSignalProbe() {
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        if (snapshot_.cursorExitOverride) {
-            snapshot_.cursorExitOverride = false;
-            notifyIfChangedLocked(lock);
-        }
-    }
-    cv_.notify_all();
-    signalWorkerWakeup();
 }
 
 bool GameModeMonitor::isGameModeActive() const {
@@ -572,8 +563,7 @@ void GameModeMonitor::workerLoop() {
                     }
                     // On GNOME Mutter XWayland without extension cursor signal, XFixesGetCursorImage
                     // often keeps returning a visible arrow even under GLFW_CURSOR_DISABLED relative
-                    // pointer lock. Never force chat=true while cursor has never hidden once; let
-                    // T / / <-> Enter / Esc fallback keep 3D WASD movement unblocked.
+                    // pointer lock. Never force chat=true while cursor has never hidden once.
                     if (isGnomeCompositor_ && !snapshot_.hasDesktopCursorSignal &&
                         cursorVis && !x11EverSawHiddenCursor_) {
                         snapshot_.hasX11WindowFocus = false;

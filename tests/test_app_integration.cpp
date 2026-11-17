@@ -527,8 +527,8 @@ void testGameModeSystemSignalFusionAndMonitor(const std::string& tmpDir) {
         EXPECT_BOOL_EQ(lastSrc == GameSignalSource::DesktopCursor, true);
 
         // If DesktopCursor stays stuck at true after Enter/Esc (e.g. QEMU/Mutter cursor sync),
-        // notifyChatKeystroke(true) must still release WASD gameplay, transient <300ms false flickers
-        // must not erase cursorExitOverride, and T / '/' re-arms chat.
+        // notifyChatKeystroke(true) must still release WASD gameplay, and transient <300ms false
+        // flickers must not erase cursorExitOverride.
         mon.setDesktopCursorState(true, true);
         EXPECT_BOOL_EQ(mon.isChatActive(), true);
         mon.notifyChatKeystroke(true);
@@ -536,8 +536,6 @@ void testGameModeSystemSignalFusionAndMonitor(const std::string& tmpDir) {
         mon.setDesktopCursorState(false, true);
         mon.setDesktopCursorState(true, true);
         EXPECT_BOOL_EQ(mon.isChatActive(), false);
-        mon.requestSignalProbe();
-        EXPECT_BOOL_EQ(mon.isChatActive(), true);
         mon.setDesktopCursorState(false, false);
         mon.setCompositorIsGnome(false);
 

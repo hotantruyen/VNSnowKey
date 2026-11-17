@@ -1010,7 +1010,7 @@ int main(int argc, char* argv[]) {
             EXPECT_BOOL_EQ(wValues[0] == 1 && wValues[1] == 2 && wValues[2] == 0, true);
         }
 
-        // Wayland-native fallback: 't' enters Vietnamese chat -> "taasn truyeefn" -> "tấn truyền" -> Enter exits back to raw movement
+        // Signal-only detection: 't' and '/' must NOT force game_chat_active on their own
         customHkCfg.inputMethod = "Simple Telex";
         customHkCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
         runCmd("./build/vnsnowkey ctl reload");
@@ -1018,14 +1018,22 @@ int main(int argc, char* argv[]) {
 
         screen.clear();
         virtKbd.tapKey(KEY_T);
+        virtKbd.tapKey(KEY_SLASH);
         drainDaemonOutput(outEvFd, screen, 20);
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
+
+        // Compositor signal (Wayland IM bridge or cursor visibility) activates Vietnamese chat cleanly
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyInputMethodState boolean:true boolean:true");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":true") != std::string::npos, true);
         screen.clear();
         typePhysicalString("taasn truyeefn");
         EXPECT_STR_EQ(u32ToUtf8(screen.text), "tấn truyền");
 
-        virtKbd.tapKey(KEY_ENTER);
-        drainDaemonOutput(outEvFd, screen, 20);
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyInputMethodState boolean:false boolean:false");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
 
         // Stuck-visible DesktopCursor (Mutter/QEMU/mouse-click menu close): Esc or held KEY_W repeat (value == 2)
@@ -1042,9 +1050,13 @@ int main(int argc, char* argv[]) {
         drainDaemonOutput(outEvFd, screen, 20);
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
 
-        // 2) Re-arm chat via '/' (stuck cursor true) -> holding KEY_W repeat (value == 2) rescues movement
-        virtKbd.tapKey(KEY_SLASH);
-        drainDaemonOutput(outEvFd, screen, 20);
+        // 2) After sustained hidden cursor (>= 300ms) -> visible cursor re-arms chat, holding KEY_W repeat (value == 2) rescues movement
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyDesktopCursorVisible boolean:false");
+        std::this_thread::sleep_for(std::chrono::milliseconds(330));
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyDesktopCursorVisible boolean:true");
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":true") != std::string::npos, true);
         drainDaemonOutput(outEvFd, screen, 10);
         virtKbd.emitKey(KEY_W, 1);
@@ -1054,8 +1066,12 @@ int main(int argc, char* argv[]) {
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
 
         // 3) Sneaking (Shift+W repeat) also rescues out of stuck-cursor chat mode, and Flatpak PrismLauncher matches Minecraft
-        virtKbd.tapKey(KEY_T);
-        drainDaemonOutput(outEvFd, screen, 20);
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyDesktopCursorVisible boolean:false");
+        std::this_thread::sleep_for(std::chrono::milliseconds(330));
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyDesktopCursorVisible boolean:true");
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":true") != std::string::npos, true);
         virtKbd.emitKey(KEY_LEFTSHIFT, 1);
         virtKbd.emitKey(KEY_W, 1);

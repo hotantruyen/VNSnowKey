@@ -82,9 +82,6 @@ public:
     // from dropping chat mode mid-word; pressing Enter/Esc clears grace immediately.
     void notifyChatKeystroke(bool isExitKey = false);
 
-    // Trigger an immediate worker poll (e.g. when T or / opens chat in GameMode).
-    void requestSignalProbe();
-
     bool isGameModeActive() const;
     bool isChatActive() const;
     bool isWaylandImBridgeAlive() const;

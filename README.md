@@ -17,7 +17,7 @@ VNSnowKey đọc phím vật lý trực tiếp từ nhân Linux qua **`evdev` (`
   - Hỗ trợ Backtrack dấu (`as` → `á`, `f` → `à`, `z` → `a`), sửa chữ giữ nguyên word buffer theo `Backspace` và phím mũi tên `←` / `→`, đặt dấu kiểu mới (`hoà`, `thuỷ`) / kiểu cũ (`hòa`, `thủy`), kiểm tra chính tả & tự trả từ tiếng Anh (`windows`, `search`, `archlinux`).
   - Gõ tắt phụ âm đầu (`cc→ch, gg→gi, kk→kh, nn→ng, qq→qu, pp→ph, tt→th`), phụ âm cuối (`g→ng, h→nh, k→ch`), bảng **Macro** và công cụ chuyển mã trực tiếp / Clipboard.
 - **Game Mode (`game_mode`)**:
-  - Tự động giữ nguyên phím di chuyển (`W/A/S/D`) trong game 3D (như Minecraft trên Wayland/XWayland) và chỉ bật gõ tiếng Việt khi mở khung chat (`T`/`/` hoặc khi con trỏ/input mở).
+  - Tự động giữ nguyên phím di chuyển (`W/A/S/D`) trong game 3D (như Minecraft trên Wayland/XWayland) và chỉ bật gõ tiếng Việt khi hệ thống nhận diện thấy con trỏ chuột hoặc khung nhập liệu đang mở.
 - **An toàn, không nháy chữ, không kẹt phím**:
   - Gom `Backspace` và ký tự thay thế trong cùng khung `SYN_REPORT`; chờ nhả phím (`EVIOCGKEY`) trước khi grab và tự nhả `EVIOCGRAB` ngay khi `SIGTERM`/`SIGINT` hoặc vào `Safe Mode`.
   - Hỗ trợ ngắt/bảo vệ từ an toàn theo click chuột (`reset_on_mouse_click`), đổi cửa sổ (`reset_on_focus_change`), phím điều hướng (`reset_on_navigation_keys`) và hết hạn đệm (`buffer_timeout_ms`).

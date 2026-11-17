@@ -150,11 +150,7 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
         capture_.setGameChatActive(chatActive, source != GameSignalSource::None);
     });
 
-    capture_.setOnGameChatKey([this](bool isExitKey, bool wakeupProbe) {
-        if (wakeupProbe && !isExitKey) {
-            gameModeMonitor_.requestSignalProbe();
-            return;
-        }
+    capture_.setOnGameChatKey([this](bool isExitKey) {
         gameModeMonitor_.notifyChatKeystroke(isExitKey);
     });
 }
