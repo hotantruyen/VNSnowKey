@@ -442,8 +442,13 @@ TransList generateTransformationsImpl(
         }
         TransList undoTrans = generateUndoTransformations(composition, applicableRules, flags);
         if (!undoTrans.empty()) {
+            TransPtr undoAppending = newAppendingTrans(lowerKey, isUpperCase);
+            undoAppending->isUndoAppended = true;
+            for (const auto& ut : undoTrans) {
+                ut->undoOwner = undoAppending;
+            }
             transformations.insert(transformations.end(), undoTrans.begin(), undoTrans.end());
-            transformations.push_back(newAppendingTrans(lowerKey, isUpperCase));
+            transformations.push_back(std::move(undoAppending));
         }
     }
     return transformations;
@@ -747,9 +752,35 @@ void BambooEngine::removeLastChar(bool refreshLastTone) {
         return;
     }
     auto [previous, lastComb] = extractLastWord(composition_, inputMethod_.keys);
+
+    struct UndonePair {
+        TransPtr target;
+        EffectType effectType;
+    };
+    std::vector<UndonePair> undonePairs;
+    if (lastAppending->isUndoAppended) {
+        for (const auto& t : lastComb) {
+            if (t->undoOwner.lock() == lastAppending) {
+                undonePairs.push_back({t->target, t->rule.effectType});
+            }
+        }
+    }
+
+    auto wasUndoneWithLast = [&](const TransPtr& t) -> bool {
+        if (t->undoOwner.lock() == lastAppending) {
+            return true;
+        }
+        for (const auto& up : undonePairs) {
+            if (t->target == up.target && t->rule.effectType == up.effectType) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     TransList newComb;
     for (const auto& t : lastComb) {
-        if (t->target == lastAppending || t == lastAppending) {
+        if (t->target == lastAppending || t == lastAppending || wasUndoneWithLast(t)) {
             continue;
         }
         newComb.push_back(t);

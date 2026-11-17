@@ -836,12 +836,36 @@ int main(int argc, char* argv[]) {
     runCmd("./build/vnsnowkey ctl resume");
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-    // 7f. E2E mistyped extra 's' on "tấn" ("taasns" + Backspace -> "tấn") & moder/shader/shift
+    // 7f. E2E undo-backspace parity ("chaanss" + Backspace -> "chân", "ddd" + Backspace -> "d", etc.) & moder/shader/shift
+    screen.clear();
+    typePhysicalString("chaanss");
+    pressBackspace(1);
+    typePhysicalString(" ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "chân ");
+
+    screen.clear();
+    typePhysicalString("chaanss");
+    pressBackspace(1);
+    typePhysicalString("f ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "chần ");
+
+    screen.clear();
+    typePhysicalString("ddd");
+    pressBackspace(1);
+    typePhysicalString("a ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "da ");
+
+    screen.clear();
+    typePhysicalString("ddd");
+    pressBackspace(1);
+    typePhysicalString("d ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "đ ");
+
     screen.clear();
     typePhysicalString("taasns");
     pressBackspace(1);
     typePhysicalString(" ");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "tấn ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "tân ");
 
     screen.clear();
     typePhysicalString("taasns ");

@@ -76,6 +76,8 @@ struct Transformation {
     Rule rule;
     std::shared_ptr<Transformation> target;
     bool isUpperCase = false;
+    bool isUndoAppended = false;
+    std::weak_ptr<Transformation> undoOwner;
 };
 
 using TransPtr = std::shared_ptr<Transformation>;

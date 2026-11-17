@@ -849,16 +849,53 @@ void testMistypedUndoAndSpellCheckEnglish() {
     opts.autoRestoreEnglish = true;
     sp.setOptions(opts);
 
-    // 1. Mistyped extra 's' on "tấn" ("taasns" or "taanss") must undo cleanly and recover on Backspace
+    // 1. Undoing tone/mark via double-key ("chaanss" -> "châns", "ddd" -> "dd", etc.) and pressing Backspace
+    //    must keep the tone/mark undone ("chân", "d") instead of snapping back to "chấn" / "đ".
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss"), "châns");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss\bf "), "chần ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss\bs "), "chấn ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss \b\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanff\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanrr\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanxx\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanjj\b"), "chân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ddd\b"), "d");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ddd\ba "), "da ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ddd\bd "), "đ ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "aaa\b"), "a");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "aaa\bn "), "an ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "tooss\b"), "tô");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toorr\b"), "tô");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "tuww\b"), "tu");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "uoww\b"), "uo");
+    sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns"), "tâns");
     sp.reset();
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns\b"), "tấn");
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns\b"), "tân");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns\bf "), "tần ");
     sp.reset();
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "taanss\b"), "tấn");
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "taanss\b"), "tân");
     sp.reset();
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasnss\b\b"), "tấn");
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasnss\b\b"), "tân");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "taasnk\b"), "tấn");
     sp.reset();
@@ -908,8 +945,10 @@ void testMistypedUndoAndSpellCheckEnglish() {
     sp.reset();
     opts.autoRestoreEnglish = false;
     sp.setOptions(opts);
-    // Backspacing out of mistyped "taasns" or "moder" back into valid Vietnamese prefix works cleanly
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns\b"), "tấn");
+    // Backspacing out of undone "taasns" / "chaanss" or "moder" back into valid Vietnamese prefix works cleanly
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "taasns\b"), "tân");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanss\b"), "chân");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "moder\b\b\btj "), "mọt ");
     sp.reset();
