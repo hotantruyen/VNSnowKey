@@ -146,8 +146,10 @@ bool isValidCVC(std::u32string_view fc, std::u32string_view vo, std::u32string_v
     if (!lcIndexes.empty()) {
         ret = isValidVC(voIndexes, lcIndexes);
     } else {
-        // Vowel-only syllable: "oă" (index 3) and "uơ" (index 4) are only valid with an initial consonant
-        if (fcIndexes.empty() && voIndexes.size() == 1 && (voIndexes[0] == 3 || voIndexes[0] == 4)) {
+        // Vowel-only syllable: "oă" (index 3) and "uơ" (index 4) are invalid standalone when complete,
+        // while "oă" must remain allowed mid-word so valid syllables like "oắt", "oăm", "oăng" can be typed.
+        if (inputIsFullComplete && fcIndexes.empty() && voIndexes.size() == 1 &&
+            (voIndexes[0] == 3 || voIndexes[0] == 4)) {
             ret = false;
         } else {
             ret = true;

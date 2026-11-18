@@ -916,6 +916,60 @@ void testMistypedUndoAndSpellCheckEnglish() {
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "windows\b\b\bows "), "windows ");
     sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "meeting\b\b\b"), "meet");
+    sp.reset();
+
+    // 1b. Plain-ASCII prefix unlock after spellcheck lock (must unlock even across >= 2 backspaces, without morphing)
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "moters\b\b\b\b\bof"), "mò");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chakas\b\b\b\b\bas"), "cá");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "moderss\b\b\b\b\botj "), "một ");
+    sp.reset();
+
+    // 1c. Vowel-initial mistyped Vietnamese words unlock cleanly on Backspace
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "uoongsk\b"), "uống");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "anhsk\b"), "ánh");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oongsk\b"), "ống");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "yeesnk\b"), "yến");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oosk\b"), "ố");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "uowsk\b"), "ướ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "awjd\b"), "ặ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "wk\b"), "ư");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "uwk\boif"), "ười");
+    sp.reset();
+
+    // 1d. Multi-char typo (>= 2 extra keys) unlocks when backspaced to a valid >=4-char Vietnamese word with tone or đ
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "tieengskkk\b\b\b"), "tiếng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toanskkk\b\b\b"), "toán");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaanskkk\b\b\b"), "chấn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ddaxkkk\b\b\b"), "đã");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieejtaaa\b\b\b"), "việt");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "uoongskkk\b\b\b"), "uống");
+    sp.reset();
+
+    // 1e. Standalone "oă" syllables can be typed mid-word with spellcheck ON, while incomplete "oă" at word end restores
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oawts "), "oắt ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oawms "), "oắm ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oawng "), "oăng ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "oaw "), "oaw ");
+    sp.reset();
 
     // 2. With SpellCheck ON and Auto-Restore OFF: "moder", "shift", "shader" must NOT become "modẻ", "shìt", "shadẻ"
     opts.autoRestoreEnglish = false;
@@ -953,6 +1007,8 @@ void testMistypedUndoAndSpellCheckEnglish() {
     EXPECT_STR_EQ(simulateSessionTyping(sp, "moder\b\b\btj "), "mọt ");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "moder\b\b\botj "), "một ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "moderss\b\b\b\b\botj "), "một ");
     sp.reset();
 
     // Alias "SimpleTelex" must resolve to "Simple Telex" (standalone w stays w!)

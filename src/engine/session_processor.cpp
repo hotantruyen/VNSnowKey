@@ -860,22 +860,30 @@ KeyActionDiff SessionProcessor::processBackspace() {
             keyForcedEnglish_.resize(rawKeys_.size(), 0);
         }
         newDisplayed = rawKeys_;
-        if (!rawKeys_.empty() && options_.spellCheckEnabled &&
-            restoredAtRawLen_ > 0 && peakRawLenSinceLock_ <= restoredAtRawLen_ + 1) {
+        if (!rawKeys_.empty() && options_.spellCheckEnabled && restoredAtRawLen_ > 0) {
             BambooEngine candEng(engine_.getInputMethod(), engine_.getFlag());
             for (char32_t k : rawKeys_) {
                 candEng.processKey(k, VietnameseMode);
             }
             std::u32string candVie = candEng.getProcessedU32(VietnameseMode);
             auto [candPrevSyl, candLastSyl] = extractLastSyllable(candEng.getComposition());
-            const bool canUnlockDiacriticSuppression =
-                !options_.autoRestoreEnglish &&
+            const bool canUnlockPlainPrefix =
                 candPrevSyl.empty() && candEng.isValid(false) && candVie == rawKeys_;
+            bool hasToneOrD = false;
+            for (char32_t c : candVie) {
+                char32_t lo = toLowerChar(c);
+                if (lo == U'đ' || findToneFromChar(lo) != Tone::None) {
+                    hasToneOrD = true;
+                    break;
+                }
+            }
+            const bool withinShortTypoWindow = (peakRawLenSinceLock_ <= restoredAtRawLen_ + 1);
             const bool canUnlockMistypedViWord =
                 options_.autoRestoreEnglish &&
                 candPrevSyl.empty() && candEng.isValid(true) &&
-                candVie != rawKeys_ && !isVowel(toLowerChar(candVie[0]));
-            if (canUnlockDiacriticSuppression || canUnlockMistypedViWord) {
+                candVie != rawKeys_ &&
+                (withinShortTypoWindow || (rawKeys_.size() >= 4 && hasToneOrD));
+            if (canUnlockPlainPrefix || canUnlockMistypedViWord) {
                 wordLockedRaw_ = false;
                 restoredAtRawLen_ = 0;
                 peakRawLenSinceLock_ = 0;

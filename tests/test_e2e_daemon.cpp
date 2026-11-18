@@ -877,6 +877,29 @@ int main(int argc, char* argv[]) {
     typePhysicalString("moder shader shift ");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "moder shader shift ");
 
+    // Unlock spellcheck-locked words on Backspace (vowel-initial, >=2 typo chars, plain-ASCII prefix, and oă onsetless)
+    screen.clear();
+    typePhysicalString("uoongsk");
+    pressBackspace(1);
+    typePhysicalString(" ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "uống ");
+
+    screen.clear();
+    typePhysicalString("tieengskkk");
+    pressBackspace(3);
+    typePhysicalString(" ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "tiếng ");
+
+    screen.clear();
+    typePhysicalString("moters");
+    pressBackspace(5);
+    typePhysicalString("of ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "mò ");
+
+    screen.clear();
+    typePhysicalString("oawts ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "oắt ");
+
     // Even with auto_restore_english = false (spellcheck still ON), moder/shader/shift must not get bogus tones
     customHkCfg.autoRestoreEnglish = false;
     customHkCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
