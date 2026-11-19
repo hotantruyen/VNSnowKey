@@ -37,7 +37,14 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Xem chi tiết lệnh cài đặt thủ công theo từng distro tại [docs/INSTALL.md](docs/INSTALL.md).
+Khi cần gỡ cài đặt sạch sẽ trên mọi distro (dừng service, gỡ gói, dọn XKB overlay và cấu hình), chạy tệp `uninstall.sh` đi kèm (hoặc `./packaging/uninstall.sh`):
+
+```bash
+chmod +x uninstall.sh
+./uninstall.sh
+```
+
+Xem chi tiết lệnh cài đặt & gỡ cài đặt thủ công theo từng distro tại [docs/INSTALL.md](docs/INSTALL.md).
 
 ---
 

@@ -103,15 +103,30 @@ systemctl --user restart vnsnowkeyd.service vnsnowkey-gui.service
 
 ---
 
-## 6. Kiểm tra trạng thái & Gỡ cài đặt
+## 6. Kiểm tra trạng thái & Gỡ cài đặt sạch sẽ
 
 Kiểm tra chẩn đoán nhanh (uinput, nhóm `input`, Wayland/X11, XKB overlay):
 ```bash
 vnsnowkey ctl doctor
 ```
 
-Gỡ cài đặt khi cần:
+### Gỡ cài đặt tự động trên mọi distro (Khuyên dùng)
+
+Dùng tệp `uninstall.sh` đi kèm trong `dist/` (hoặc `packaging/uninstall.sh` trong repo) để dừng service, gỡ gói hệ thống / file cài từ source, xoá XKB overlay (`~/.config/xkb`), extension GNOME, cấu hình `~/.config/vnsnowkey/` và làm mới cache:
+
+```bash
+chmod +x uninstall.sh
+./uninstall.sh
+```
+
+Tuỳ chọn hữu ích:
+- Xem trước các lệnh sẽ thực hiện mà không thay đổi hệ thống: `./uninstall.sh --dry-run`
+- Giữ lại cấu hình & macro (`~/.config/vnsnowkey/`): `./uninstall.sh --keep-config`
+- Gỡ luôn user khỏi nhóm `input`: `./uninstall.sh --remove-input-group`
+- Tự xác nhận không hỏi lại: `./uninstall.sh -y`
+
+### Gỡ gói thủ công theo từng distro (chỉ gỡ package)
 * **Arch Linux**: `sudo pacman -Rns vnsnowkey`
-* **Ubuntu / Debian**: `sudo apt remove vnsnowkey`
+* **Ubuntu / Debian**: `sudo apt purge vnsnowkey`
 * **Fedora**: `sudo dnf remove vnsnowkey`
-* **openSUSE**: `sudo zypper remove vnsnowkey`
+* **openSUSE**: `sudo zypper remove -u vnsnowkey`

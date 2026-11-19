@@ -23,11 +23,12 @@ rm -rf "${ROOT_DIR}/pkg" "${ROOT_DIR}"/vnsnowkey-*.pkg.tar.zst
 
 cp -vf "${ROOT_DIR}/docs/INSTALL.md" "${DIST_DIR}/INSTALL.md"
 cp -vf "${ROOT_DIR}/packaging/install.sh" "${DIST_DIR}/install.sh"
-chmod +x "${DIST_DIR}/install.sh"
+cp -vf "${ROOT_DIR}/packaging/uninstall.sh" "${DIST_DIR}/uninstall.sh"
+chmod +x "${DIST_DIR}/install.sh" "${DIST_DIR}/uninstall.sh"
 
 (
     cd "${DIST_DIR}"
-    sha256sum install.sh INSTALL.md */vnsnowkey* > SHA256SUMS
+    sha256sum install.sh uninstall.sh INSTALL.md */vnsnowkey* > SHA256SUMS
 )
 
 echo "==> Done! Release artifacts:"
