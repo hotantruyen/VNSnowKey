@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vnsnowkey
-Version:        1.0.0
+Version:        1.0.1
 Release:        1
 Summary:        Vietnamese Input Method for Linux Wayland and X11
 
@@ -30,6 +30,8 @@ Requires:       xkeyboard-config
 Requires:       kmod
 Requires:       libX11
 Requires:       libXfixes
+Recommends:     xkbcomp
+Recommends:     setxkbmap
 Recommends:     qt6-qtwayland
 Recommends:     (gnome-shell-extension-appindicator if gnome-shell)
 
@@ -127,5 +129,8 @@ echo "       - KDE Plasma:    System Settings -> Keyboard -> Virtual Keyboard ->
 %{_datadir}/icons/hicolor/scalable/status/vnsnowkey-en-symbolic.svg
 
 %changelog
+* Fri Nov 20 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.1-1
+- Fix X11 reboot & GNOME/KDE XKB overlay application, add live keymap verification, auto-fallback, and multi-distro uninstaller.
+
 * Mon Nov 16 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.0-1
 - Rebranded project to VNSnowKey (GPL-3.0-or-later) with full multi-distro Wayland/X11, GNOME Shell 51/52, GameMode, and post-click buffer protection support.

@@ -495,6 +495,21 @@ void UinputEmitter::setClipboardHooks(ClipboardGetFn getFn, ClipboardSetFn setFn
     if (setFn) clipboardSetFn_ = std::move(setFn);
 }
 
+bool UinputEmitter::hasClipboardBackend() {
+    if (std::system(
+            "sh -c '"
+            "if [ -n \"$WAYLAND_DISPLAY\" ] && command -v wl-copy >/dev/null 2>&1; then exit 0; fi; "
+            "if command -v qdbus6 >/dev/null 2>&1 && qdbus6 org.kde.klipper /klipper >/dev/null 2>&1; then exit 0; fi; "
+            "if command -v qdbus-qt6 >/dev/null 2>&1 && qdbus-qt6 org.kde.klipper /klipper >/dev/null 2>&1; then exit 0; fi; "
+            "if command -v qdbus >/dev/null 2>&1 && qdbus org.kde.klipper /klipper >/dev/null 2>&1; then exit 0; fi; "
+            "if command -v gdbus >/dev/null 2>&1 && gdbus call --session --dest org.kde.klipper --object-path /klipper --method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then exit 0; fi; "
+            "if [ -n \"$DISPLAY\" ] && (command -v xclip >/dev/null 2>&1 || command -v xsel >/dev/null 2>&1); then exit 0; fi; "
+            "exit 1' >/dev/null 2>&1") == 0) {
+        return true;
+    }
+    return false;
+}
+
 bool UinputEmitter::readSystemClipboard(std::string& outText) {
     outText.clear();
     auto readPipe = [](const char* cmd, bool trimTrailingNewline) -> std::pair<bool, std::string> {
@@ -513,27 +528,24 @@ bool UinputEmitter::readSystemClipboard(std::string& outText) {
         return {true, result};
     };
 
-    if (auto [ok, val] = readPipe(
-            "qdbus6 org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null", true);
-        ok) {
-        outText = std::move(val);
-        return true;
+    for (const char* cmd : {
+             "qdbus6 org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null",
+             "qdbus-qt6 org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null",
+             "qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null",
+         }) {
+        if (auto [ok, val] = readPipe(cmd, true); ok) {
+            outText = std::move(val);
+            return true;
+        }
     }
-    if (auto [ok, val] = readPipe(
-            "qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null", true);
-        ok) {
-        outText = std::move(val);
-        return true;
-    }
-    const char* waylandDisp = std::getenv("WAYLAND_DISPLAY");
-    if (waylandDisp && *waylandDisp) {
+    if (XkbOverlay::isWaylandSession()) {
         if (auto [ok, val] = readPipe("wl-paste --no-newline 2>/dev/null", false); ok) {
             outText = std::move(val);
             return true;
         }
     }
-    const char* x11Disp = std::getenv("DISPLAY");
-    if (x11Disp && *x11Disp) {
+    std::string x11Disp = XkbOverlay::resolveX11Display();
+    if (!x11Disp.empty()) {
         if (auto [ok, val] = readPipe("xclip -o -selection clipboard 2>/dev/null", false); ok) {
             outText = std::move(val);
             return true;
@@ -547,14 +559,16 @@ bool UinputEmitter::readSystemClipboard(std::string& outText) {
 }
 
 bool UinputEmitter::writeSystemClipboard(const std::string& text) {
+    // Ensure DISPLAY/XAUTHORITY are populated when running under systemd --user
+    (void)XkbOverlay::resolveX11Display();
     // Pass arbitrary UTF-8 safely via environment variable or stdin without shell-escaping hazards
     setenv("VNSNOWKEY_CLIP_TMP", text.c_str(), 1);
     int rc = std::system(
         "sh -c '"
-        "if command -v qdbus6 >/dev/null 2>&1 && "
-        "qdbus6 org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents \"$VNSNOWKEY_CLIP_TMP\" >/dev/null 2>&1; then exit 0; fi; "
-        "if command -v qdbus >/dev/null 2>&1 && "
-        "qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents \"$VNSNOWKEY_CLIP_TMP\" >/dev/null 2>&1; then exit 0; fi; "
+        "for q in qdbus6 qdbus-qt6 qdbus; do "
+        "  if command -v \"$q\" >/dev/null 2>&1 && "
+        "     \"$q\" org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents \"$VNSNOWKEY_CLIP_TMP\" >/dev/null 2>&1; then exit 0; fi; "
+        "done; "
         "if [ -n \"$WAYLAND_DISPLAY\" ] && command -v wl-copy >/dev/null 2>&1; then "
         "printf \"%s\" \"$VNSNOWKEY_CLIP_TMP\" | wl-copy >/dev/null 2>&1 && exit 0; fi; "
         "if [ -n \"$DISPLAY\" ] && command -v xclip >/dev/null 2>&1; then "

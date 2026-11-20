@@ -26,6 +26,7 @@ Depends:
  ${misc:Depends},
  kmod,
  udev,
+ x11-xkb-utils,
  xkb-data
 Recommends:
  libx11-6,

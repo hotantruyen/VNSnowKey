@@ -73,12 +73,14 @@ Q_SIGNALS:
 private Q_SLOTS:
     void onKWinTextInputChanged();
     void onImBridgeServiceUnregistered(const QString& serviceName);
+    void onKeyboardHotplug();
 
 private:
     void emitStateChangedSignal();
     void showOsdNotification(const QString& text);
     void updateGameModeForFocus(const std::string& appClass, bool isPasswordDialog);
     bool queryKWinTextInputSupported() const;
+    void verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFailure);
 
     std::string configPath_;
     bool noGrab_ = false;
@@ -89,6 +91,9 @@ private:
     FocusTracker focusTracker_;
     GameModeMonitor gameModeMonitor_;
     QDBusServiceWatcher imBridgeWatcher_;
+    bool xkbOverlayVerified_ = true;
+    bool xkbFailureNotified_ = false;
+    std::string xkbDiagnosticNote_;
 };
 
 } // namespace vnsnowkey

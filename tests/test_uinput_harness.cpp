@@ -488,6 +488,57 @@ void testConfigSerializationRoundTrip(const std::string& tmpCfgDir) {
     EXPECT_STR_EQ(migrated.shortcuts.panicSafeMode, "");
 }
 
+void testXkbKeymapParsersAndFallback() {
+    // 1. Simulate the exact broken Ubuntu X11 keymap dump (has system I178/I184/EIGHT_LEVEL_ALPHABETIC but NO agrave)
+    const std::string brokenDump =
+        "    <I178> = 178;\n"
+        "    <I184> = 184;\n"
+        "    type \"EIGHT_LEVEL_ALPHABETIC\" {\n"
+        "    key <AD01> { symbols[Group1]= [ q, Q ] };\n";
+    std::string missing;
+    EXPECT_BOOL_EQ(XkbOverlay::keymapTextHasVnsnowkeyOverlay(brokenDump, &missing), false);
+    EXPECT_BOOL_EQ(missing.find("agrave") != std::string::npos, true);
+
+    const std::string validDump =
+        "    <I178> = 178;\n"
+        "    <I184> = 184;\n"
+        "    type \"EIGHT_LEVEL_ALPHABETIC\" {\n"
+        "    key <AD01> { symbols[Group1]= [ q, Q, agrave, Agrave, aacute, Aacute, ahook, Ahook ] };\n";
+    EXPECT_BOOL_EQ(XkbOverlay::keymapTextHasVnsnowkeyOverlay(validDump, &missing), true);
+    EXPECT_STR_EQ(missing, "");
+
+    // 2. Layout parsers across GNOME / KDE / X11
+    std::string layout, variant;
+    EXPECT_BOOL_EQ(XkbOverlay::parseGnomeInputSources("[('xkb', 'us')]", layout, variant), true);
+    EXPECT_STR_EQ(layout, "us");
+    EXPECT_STR_EQ(variant, "");
+
+    EXPECT_BOOL_EQ(XkbOverlay::parseGnomeInputSources("[('xkb', 'us+intl'), ('ibus', 'unikey')]", layout, variant), true);
+    EXPECT_STR_EQ(layout, "us");
+    EXPECT_STR_EQ(variant, "intl");
+
+    EXPECT_BOOL_EQ(XkbOverlay::parseKxkbrcContent("[Layout]\nUse=true\nLayoutList=us,vn\nVariantList=intl,\n", layout, variant), true);
+    EXPECT_STR_EQ(layout, "us");
+    EXPECT_STR_EQ(variant, "intl");
+
+    EXPECT_BOOL_EQ(XkbOverlay::parseKxkbrcContent("[Layout]\nUse=false\nLayoutList=fr\n", layout, variant), true);
+    EXPECT_STR_EQ(layout, "us");
+
+    EXPECT_BOOL_EQ(XkbOverlay::parseSetxkbmapQuery("rules: evdev\nmodel: pc105\nlayout: gb,us\nvariant: extd,\n", layout, variant), true);
+    EXPECT_STR_EQ(layout, "gb");
+    EXPECT_STR_EQ(variant, "extd");
+
+    // 3. EvdevCapture fallback override flag
+    bamboo::SessionProcessor sp;
+    UinputEmitter em;
+    EvdevCapture cap(sp, em);
+    EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == -1, true);
+    cap.setXkbFallbackMethod(static_cast<int>(OutputMethod::CtrlShiftU));
+    EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == static_cast<int>(OutputMethod::CtrlShiftU), true);
+    cap.setXkbFallbackMethod(-1);
+    EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == -1, true);
+}
+
 } // namespace
 
 int main() {
@@ -497,6 +548,7 @@ int main() {
     testXkbOverlayAll134VietnameseChars(tmpDir);
     testUinputKernelLoopbackAndStress(tmpDir);
     testConfigSerializationRoundTrip(tmpDir);
+    testXkbKeymapParsersAndFallback();
 
     std::filesystem::remove_all(tmpDir);
 

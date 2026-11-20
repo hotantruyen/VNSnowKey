@@ -60,11 +60,19 @@ public:
     void exitSafeMode();
     bool isInSafeMode() const { return safeMode_.load(); }
 
-    // Callbacks when user triggers hotkey or GameMode chat activity from physical keyboard
+    // Callbacks when user triggers hotkey, GameMode chat activity, or keyboard hotplug from physical keyboard
     using GameChatKeyCallback = std::function<void(bool isExitKey)>;
+    using KeyboardHotplugCallback = std::function<void()>;
     void setOnLanguageToggled(LanguageToggleCallback cb) { onLangToggled_ = std::move(cb); }
     void setOnPanicTriggered(PanicModeCallback cb) { onPanic_ = std::move(cb); }
     void setOnGameChatKey(GameChatKeyCallback cb) { onGameChatKey_ = std::move(cb); }
+    void setOnKeyboardHotplug(KeyboardHotplugCallback cb) { onKeyboardHotplug_ = std::move(cb); }
+
+    // Runtime XKB fallback override (only engaged when XkbKeymap overlay is not active in live display)
+    void setXkbFallbackMethod(int outputMethodOrMinusOne) {
+        xkbFallbackMethod_.store(outputMethodOrMinusOne, std::memory_order_release);
+    }
+    int xkbFallbackMethod() const { return xkbFallbackMethod_.load(std::memory_order_acquire); }
 
     // Diagnostics: list currently monitored devices
     std::vector<GrabbedDeviceInfo> getMonitoredDevices() const;
@@ -135,6 +143,8 @@ private:
     LanguageToggleCallback onLangToggled_;
     PanicModeCallback onPanic_;
     GameChatKeyCallback onGameChatKey_;
+    KeyboardHotplugCallback onKeyboardHotplug_;
+    std::atomic<int> xkbFallbackMethod_{-1};
 };
 
 } // namespace vnsnowkey

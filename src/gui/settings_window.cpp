@@ -1054,7 +1054,7 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addWidget(diagnosticsOutputEdit_, 1);
 
     auto* botRow = new QHBoxLayout();
-    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.0</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
+    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.1</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
     auto* refreshDiagBtn = new QPushButton(QStringLiteral("Kiểm tra lại"), page);
     connect(refreshDiagBtn, &QPushButton::clicked, this, &SettingsWindow::onRefreshDiagnostics);
     botRow->addWidget(verLbl, 1);
@@ -1485,9 +1485,18 @@ void SettingsWindow::onRefreshDiagnostics() {
            << "      sudo usermod -aG input $USER && newgrp input\n";
     }
 
-    // 3. Check XKB Overlay
+    // 3. Check XKB Overlay (file + live keymap state)
     if (XkbOverlay::isOverlayInstalled()) {
-        ts << "[OK] XKB 8-Level Vietnamese Overlay (~/.config/xkb/symbols/us): Đã cài đặt\n";
+        std::string missing;
+        XkbLiveStatus xkbStatus = XkbOverlay::probeX11KeymapStatus(&missing);
+        if (xkbStatus == XkbLiveStatus::VerifiedActive) {
+            ts << "[OK] XKB 8-Level Vietnamese Overlay: Đã cài đặt và đang có hiệu lực\n";
+        } else if (xkbStatus == XkbLiveStatus::WaylandUnverifiedNoXDisplay) {
+            ts << "[OK] XKB 8-Level Vietnamese Overlay (~/.config/xkb/symbols/us): Đã cài đặt\n";
+        } else {
+            ts << "[CHÚ Ý] XKB Overlay đã có file nhưng keymap hiện tại chưa nạp ("
+               << QString::fromStdString(missing) << ") — thử 'vnsnowkey ctl reapply-xkb'\n";
+        }
     } else {
         ts << "[CHÚ Ý] XKB Overlay chưa được tạo (vnsnowkeyd sẽ tự động cài khi khởi chạy).\n";
     }

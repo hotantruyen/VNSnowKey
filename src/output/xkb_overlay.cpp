@@ -7,6 +7,7 @@
 
 #include "xkb_overlay.hpp"
 #include "../engine/bamboo_utils.hpp"
+#include "../focus/xwayland_env.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -14,6 +15,8 @@
 #include <iomanip>
 #include <linux/input-event-codes.h>
 #include <sstream>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace vnsnowkey {
 
@@ -24,6 +27,74 @@ std::string formatKeysym(char32_t cp) {
     std::ostringstream oss;
     oss << "U" << std::uppercase << std::hex << std::setw(4) << std::setfill('0') << static_cast<uint32_t>(cp);
     return oss.str();
+}
+
+std::string trimAscii(std::string s) {
+    size_t start = 0;
+    while (start < s.size() && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' || s[start] == '\n')) {
+        ++start;
+    }
+    size_t end = s.size();
+    while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) {
+        --end;
+    }
+    return s.substr(start, end - start);
+}
+
+std::string toLowerAsciiStr(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+    }
+    return s;
+}
+
+bool hasExecutableInPath(const char* cmdName) {
+    if (!cmdName || !*cmdName) return false;
+    std::string cmd = std::string("command -v ") + cmdName + " >/dev/null 2>&1";
+    return std::system(cmd.c_str()) == 0;
+}
+
+bool runPipeRead(const char* cmd, std::string& out, int* exitCode = nullptr) {
+    out.clear();
+    FILE* pipe = ::popen(cmd, "r");
+    if (!pipe) return false;
+    char buf[1024];
+    while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
+        out += buf;
+    }
+    int status = ::pclose(pipe);
+    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (exitCode) *exitCode = rc;
+    return rc == 0;
+}
+
+XkbCompositorHint detectCompositorFromEnv(XkbCompositorHint hint) {
+    if (hint != XkbCompositorHint::Auto) {
+        return hint;
+    }
+    if (const char* hypr = std::getenv("HYPRLAND_INSTANCE_SIGNATURE"); hypr && *hypr) {
+        return XkbCompositorHint::Hyprland;
+    }
+    if (const char* sway = std::getenv("SWAYSOCK"); sway && *sway) {
+        return XkbCompositorHint::Sway;
+    }
+    std::string deskStr;
+    if (const char* desktop = std::getenv("XDG_CURRENT_DESKTOP")) {
+        deskStr = toLowerAsciiStr(desktop);
+    }
+    if (deskStr.find("hyprland") != std::string::npos) return XkbCompositorHint::Hyprland;
+    if (deskStr.find("sway") != std::string::npos) return XkbCompositorHint::Sway;
+    if (deskStr.find("gnome") != std::string::npos || std::getenv("GNOME_DESKTOP_SESSION_ID") != nullptr) {
+        return XkbCompositorHint::GnomeShell;
+    }
+    if (deskStr.find("kde") != std::string::npos || deskStr.find("plasma") != std::string::npos ||
+        std::getenv("KDE_FULL_SESSION") != nullptr) {
+        return XkbCompositorHint::KWin;
+    }
+    if (!XkbOverlay::isWaylandSession()) {
+        return XkbCompositorHint::X11;
+    }
+    return XkbCompositorHint::Auto;
 }
 
 } // namespace
@@ -339,64 +410,323 @@ bool XkbOverlay::installOverlayFiles(const std::string& xkbConfigDir, std::strin
     }
 }
 
-bool XkbOverlay::reloadCompositorXkb() {
-    const char* hypr = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
-    if (hypr && *hypr) {
+bool XkbOverlay::isWaylandSession() {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return false;
+    }
+    if (const char* sessionType = std::getenv("XDG_SESSION_TYPE")) {
+        std::string st = toLowerAsciiStr(sessionType);
+        if (st == "x11") return false;
+        if (st == "wayland") return true;
+    }
+    if (const char* waylandDisp = std::getenv("WAYLAND_DISPLAY"); waylandDisp && waylandDisp[0] != '\0') {
+        return true;
+    }
+    return !xwayland_env::discoverWaylandSocketPath().empty();
+}
+
+std::string XkbOverlay::resolveX11Display() {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return {};
+    }
+    if (const char* x11Disp = std::getenv("DISPLAY"); x11Disp && x11Disp[0] != '\0') {
+        xwayland_env::ensureXAuthorityEnv(false);
+        return std::string(x11Disp);
+    }
+    std::string discovered = xwayland_env::discoverX11SocketDisplay();
+    if (!discovered.empty()) {
+        ::setenv("DISPLAY", discovered.c_str(), 0);
+        xwayland_env::ensureXAuthorityEnv(false);
+    }
+    return discovered;
+}
+
+bool XkbOverlay::keymapTextHasVnsnowkeyOverlay(const std::string& dumpedKeymap, std::string* missingDetails) {
+    const bool hasI178 = dumpedKeymap.find("<I178>") != std::string::npos;
+    const bool hasI184 = dumpedKeymap.find("<I184>") != std::string::npos;
+    const bool hasType = dumpedKeymap.find("EIGHT_LEVEL_ALPHABETIC") != std::string::npos;
+    const bool hasVnSym = dumpedKeymap.find("agrave") != std::string::npos ||
+                          dumpedKeymap.find("U00E0") != std::string::npos ||
+                          dumpedKeymap.find("U00e0") != std::string::npos;
+    if (hasI178 && hasI184 && hasType && hasVnSym) {
+        if (missingDetails) missingDetails->clear();
+        return true;
+    }
+    if (missingDetails) {
+        std::vector<std::string> missing;
+        if (!hasI178) missing.push_back("<I178>");
+        if (!hasI184) missing.push_back("<I184>");
+        if (!hasType) missing.push_back("EIGHT_LEVEL_ALPHABETIC");
+        if (!hasVnSym) missing.push_back("agrave");
+        std::ostringstream oss;
+        for (size_t i = 0; i < missing.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << missing[i];
+        }
+        *missingDetails = oss.str();
+    }
+    return false;
+}
+
+XkbLiveStatus XkbOverlay::probeX11KeymapStatus(std::string* missingDetails) {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return XkbLiveStatus::WaylandUnverifiedNoXDisplay;
+    }
+    std::string disp = resolveX11Display();
+    if (disp.empty()) {
+        if (isWaylandSession()) {
+            return XkbLiveStatus::WaylandUnverifiedNoXDisplay;
+        }
+        if (missingDetails) *missingDetails = "Không tìm thấy X11 DISPLAY";
+        return XkbLiveStatus::InactiveOverlayMissing;
+    }
+    if (!hasExecutableInPath("xkbcomp")) {
+        if (missingDetails) *missingDetails = "Thiếu lệnh 'xkbcomp' (cài gói x11-xkb-utils / xorg-xkbcomp / xkbcomp)";
+        return XkbLiveStatus::ToolMissing;
+    }
+    std::string dumped;
+    int rc = -1;
+    std::string cmd = "DISPLAY='" + disp + "' xkbcomp \"$DISPLAY\" - 2>/dev/null";
+    if (!runPipeRead(cmd.c_str(), dumped, &rc) || dumped.empty()) {
+        if (isWaylandSession()) {
+            return XkbLiveStatus::WaylandUnverifiedNoXDisplay;
+        }
+        if (missingDetails) *missingDetails = "xkbcomp không đọc được keymap từ DISPLAY=" + disp;
+        return XkbLiveStatus::InactiveOverlayMissing;
+    }
+    if (keymapTextHasVnsnowkeyOverlay(dumped, missingDetails)) {
+        return XkbLiveStatus::VerifiedActive;
+    }
+    return XkbLiveStatus::InactiveOverlayMissing;
+}
+
+bool XkbOverlay::parseGnomeInputSources(const std::string& gsettingsOutput, std::string& outLayout, std::string& outVariant) {
+    outLayout.clear();
+    outVariant.clear();
+    // Format example: "[('xkb', 'us')]" or "[('xkb', 'us+intl'), ('ibus', 'unikey')]"
+    size_t pos = gsettingsOutput.find("'xkb'");
+    if (pos == std::string::npos) {
+        return false;
+    }
+    size_t comma = gsettingsOutput.find(',', pos);
+    if (comma == std::string::npos) return false;
+    size_t q1 = gsettingsOutput.find('\'', comma);
+    if (q1 == std::string::npos) return false;
+    size_t q2 = gsettingsOutput.find('\'', q1 + 1);
+    if (q2 == std::string::npos) return false;
+    std::string val = trimAscii(gsettingsOutput.substr(q1 + 1, q2 - q1 - 1));
+    if (val.empty()) return false;
+    size_t plus = val.find('+');
+    if (plus == std::string::npos) {
+        outLayout = val;
+    } else {
+        outLayout = val.substr(0, plus);
+        outVariant = val.substr(plus + 1);
+    }
+    return true;
+}
+
+bool XkbOverlay::parseKxkbrcContent(const std::string& content, std::string& outLayout, std::string& outVariant) {
+    outLayout.clear();
+    outVariant.clear();
+    std::istringstream iss(content);
+    std::string line;
+    bool inLayoutGroup = false;
+    bool useCustom = false;
+    std::string layoutList;
+    std::string variantList;
+    while (std::getline(iss, line)) {
+        std::string t = trimAscii(line);
+        if (t.empty() || t[0] == '#') continue;
+        if (t.front() == '[' && t.back() == ']') {
+            inLayoutGroup = (t == "[Layout]");
+            continue;
+        }
+        if (!inLayoutGroup) continue;
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = trimAscii(t.substr(0, eq));
+        std::string v = trimAscii(t.substr(eq + 1));
+        if (k == "Use") {
+            std::string lo = toLowerAsciiStr(v);
+            useCustom = (lo == "true" || lo == "1");
+        } else if (k == "LayoutList") {
+            layoutList = v;
+        } else if (k == "VariantList") {
+            variantList = v;
+        }
+    }
+    if (!useCustom || layoutList.empty()) {
+        outLayout = "us";
+        return true;
+    }
+    size_t c1 = layoutList.find(',');
+    outLayout = trimAscii(c1 == std::string::npos ? layoutList : layoutList.substr(0, c1));
+    if (!variantList.empty()) {
+        size_t c2 = variantList.find(',');
+        outVariant = trimAscii(c2 == std::string::npos ? variantList : variantList.substr(0, c2));
+    }
+    return !outLayout.empty();
+}
+
+bool XkbOverlay::parseSetxkbmapQuery(const std::string& queryOutput, std::string& outLayout, std::string& outVariant) {
+    outLayout.clear();
+    outVariant.clear();
+    std::istringstream iss(queryOutput);
+    std::string line;
+    while (std::getline(iss, line)) {
+        std::string t = trimAscii(line);
+        if (t.rfind("layout:", 0) == 0) {
+            std::string val = trimAscii(t.substr(7));
+            size_t c = val.find(',');
+            outLayout = trimAscii(c == std::string::npos ? val : val.substr(0, c));
+        } else if (t.rfind("variant:", 0) == 0) {
+            std::string val = trimAscii(t.substr(8));
+            size_t c = val.find(',');
+            outVariant = trimAscii(c == std::string::npos ? val : val.substr(0, c));
+        }
+    }
+    return !outLayout.empty();
+}
+
+bool XkbOverlay::detectActiveKeyboardLayout(std::string& outLayout, std::string& outVariant, XkbCompositorHint hint) {
+    outLayout.clear();
+    outVariant.clear();
+    if (xwayland_env::isIsolatedTestEnv()) {
+        outLayout = "us";
+        return true;
+    }
+
+    XkbCompositorHint effHint = detectCompositorFromEnv(hint);
+    if (effHint == XkbCompositorHint::GnomeShell && hasExecutableInPath("gsettings")) {
+        std::string gsOut;
+        if (runPipeRead("gsettings get org.gnome.desktop.input-sources sources 2>/dev/null", gsOut)) {
+            if (parseGnomeInputSources(gsOut, outLayout, outVariant)) {
+                return true;
+            }
+        }
+    }
+
+    if (effHint == XkbCompositorHint::KWin) {
+        const char* cfgHome = std::getenv("XDG_CONFIG_HOME");
+        const char* home = std::getenv("HOME");
+        std::filesystem::path kxkbPath = (cfgHome && cfgHome[0])
+            ? (std::filesystem::path(cfgHome) / "kxkbrc")
+            : (std::filesystem::path(home ? home : "") / ".config/kxkbrc");
+        std::ifstream kf(kxkbPath);
+        if (kf.is_open()) {
+            std::ostringstream buf;
+            buf << kf.rdbuf();
+            if (parseKxkbrcContent(buf.str(), outLayout, outVariant)) {
+                return true;
+            }
+        } else {
+            outLayout = "us";
+            return true;
+        }
+    }
+
+    std::string disp = resolveX11Display();
+    if (!disp.empty() && hasExecutableInPath("setxkbmap")) {
+        std::string queryOut;
+        std::string cmd = "DISPLAY='" + disp + "' setxkbmap -query 2>/dev/null";
+        if (runPipeRead(cmd.c_str(), queryOut) && parseSetxkbmapQuery(queryOut, outLayout, outVariant)) {
+            return true;
+        }
+    }
+
+    outLayout = "us";
+    return false;
+}
+
+bool XkbOverlay::applyX11XkbOverlay(const std::string& xkbConfigDir) {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return true;
+    }
+    std::string disp = resolveX11Display();
+    if (disp.empty() || !hasExecutableInPath("xkbcomp")) {
+        return false;
+    }
+    std::string dir = xkbConfigDir.empty() ? defaultXkbConfigDir() : xkbConfigDir;
+    ::setenv("VNSNOWKEY_XKB_DIR_TMP", dir.c_str(), 1);
+    int rc = std::system(
+        "sh -c '"
+        "if command -v setxkbmap >/dev/null 2>&1; then "
+        "  setxkbmap -print 2>/dev/null | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1; "
+        "else "
+        "  printf \"xkb_keymap {\\n  xkb_keycodes { include \\\"evdev+aliases(qwerty)\\\" };\\n  xkb_types { include \\\"complete\\\" };\\n  xkb_compat { include \\\"complete\\\" };\\n  xkb_symbols { include \\\"pc+us+inet(evdev)\\\" };\\n};\\n\" | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1; "
+        "fi' >/dev/null 2>&1");
+    ::unsetenv("VNSNOWKEY_XKB_DIR_TMP");
+    return rc == 0;
+}
+
+bool XkbOverlay::reloadCompositorXkb(XkbCompositorHint hint) {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return true;
+    }
+
+    const bool wayland = isWaylandSession();
+    const XkbCompositorHint effHint = detectCompositorFromEnv(hint);
+
+    if (effHint == XkbCompositorHint::Hyprland) {
         int rc = std::system("hyprctl keyword input:kb_layout us >/dev/null 2>&1 || true");
         return rc == 0;
     }
 
-    const char* sway = std::getenv("SWAYSOCK");
-    if (sway && *sway) {
+    if (effHint == XkbCompositorHint::Sway) {
         int rc = std::system("swaymsg 'input type:keyboard xkb_layout us' >/dev/null 2>&1 || true");
         return rc == 0;
     }
 
-    const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
-    std::string deskStr = desktop ? desktop : "";
-    for (char& c : deskStr) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
-    }
-    if (deskStr.find("gnome") != std::string::npos) {
+    if (effHint == XkbCompositorHint::GnomeShell) {
+        if (!wayland) {
+            // Pure GNOME X11: apply directly with xkbcomp WITHOUT toggling gsettings xkb-options
+            // (toggling xkb-options on X11 triggers gsd-keyboard asynchronously and wipes our xkbcomp keymap!).
+            return applyX11XkbOverlay();
+        }
         int rc = std::system(
-            "sh -c 'dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/xkb\"; "
+            "sh -c '"
             "v=$(gsettings get org.gnome.desktop.input-sources xkb-options 2>/dev/null); "
             "if [ -n \"$v\" ]; then "
-            "if [ \"$v\" = \"@as []\" ]; then gsettings set org.gnome.desktop.input-sources xkb-options \"['\\''vnsnowkey:reload'\\'']\"; "
-            "else gsettings set org.gnome.desktop.input-sources xkb-options \"@as []\"; fi; "
-            "sleep 0.15; "
-            "gsettings set org.gnome.desktop.input-sources xkb-options \"$v\"; "
-            "fi; "
-            "if [ -n \"$DISPLAY\" ] && command -v setxkbmap >/dev/null 2>&1 && command -v xkbcomp >/dev/null 2>&1; then "
-            "setxkbmap -print | xkbcomp -I\"$dir\" - \"$DISPLAY\" >/dev/null 2>&1 || true; "
+            "  if [ \"$v\" = \"@as []\" ] || [ \"$v\" = \"[]\" ]; then "
+            "    gsettings set org.gnome.desktop.input-sources xkb-options \"['\\''vnsnowkey:reload'\\'']\"; "
+            "  else "
+            "    gsettings set org.gnome.desktop.input-sources xkb-options \"@as []\"; "
+            "  fi; "
+            "  sleep 0.25; "
+            "  gsettings set org.gnome.desktop.input-sources xkb-options \"$v\"; "
             "fi' >/dev/null 2>&1 || true");
         return rc == 0;
     }
 
-    const char* waylandDisp = std::getenv("WAYLAND_DISPLAY");
-    const char* x11Disp = std::getenv("DISPLAY");
-    if ((!waylandDisp || !*waylandDisp) && (x11Disp && *x11Disp)) {
-        int rc = std::system(
-            "sh -c 'dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/xkb\"; "
-            "command -v setxkbmap >/dev/null && command -v xkbcomp >/dev/null && "
-            "setxkbmap -print | xkbcomp -I\"$dir\" - \"$DISPLAY\"' >/dev/null 2>&1 || true");
-        return rc == 0;
+    if (effHint == XkbCompositorHint::KWin) {
+        int rc1 = std::system(
+            "gdbus emit --session --object-path /kxkbrc "
+            "--signal org.kde.kconfig.notify.ConfigChanged "
+            "'{\"Layout\": [b\"Use\", b\"LayoutList\", b\"VariantList\", b\"Options\"]}' >/dev/null 2>&1 || true");
+        (void)rc1;
+
+        int rc2 = std::system(
+            "sh -c '"
+            "if command -v qdbus6 >/dev/null 2>&1; then qdbus6 org.kde.KWin /KWin reconfigure; "
+            "elif command -v qdbus-qt6 >/dev/null 2>&1; then qdbus-qt6 org.kde.KWin /KWin reconfigure; "
+            "elif command -v qdbus >/dev/null 2>&1; then qdbus org.kde.KWin /KWin reconfigure; "
+            "elif command -v gdbus >/dev/null 2>&1; then gdbus call --session --dest org.kde.KWin --object-path /KWin --method org.kde.KWin.reconfigure; "
+            "fi' >/dev/null 2>&1 || true");
+        if (!wayland) {
+            return applyX11XkbOverlay() || (rc2 == 0);
+        }
+        return rc2 == 0;
     }
 
-    // KDE Plasma / KWin (supports both qdbus6 and qdbus names across Arch/Debian/Ubuntu)
-    int rc1 = std::system(
-        "gdbus emit --session --object-path /kxkbrc "
-        "--signal org.kde.kconfig.notify.ConfigChanged '{\"Layout\": [b\"Use\"]}' >/dev/null 2>&1 || true");
-    (void)rc1;
-
-    int rc2 = std::system(
-        "sh -c 'if command -v qdbus6 >/dev/null 2>&1; then qdbus6 org.kde.KWin /KWin reconfigure; "
-        "elif command -v qdbus >/dev/null 2>&1; then qdbus org.kde.KWin /KWin reconfigure; fi' >/dev/null 2>&1 || true");
-    return rc2 == 0;
+    if (!wayland) {
+        return applyX11XkbOverlay();
+    }
+    return false;
 }
 
 bool XkbOverlay::reloadKWinXkb() {
-    return reloadCompositorXkb();
+    return reloadCompositorXkb(XkbCompositorHint::Auto);
 }
 
 } // namespace vnsnowkey

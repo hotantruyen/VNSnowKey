@@ -1,6 +1,6 @@
 # Maintainer: VNSnowKey Contributors <vnsnowkey@archlinux.local>
 pkgname=vnsnowkey
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Vietnamese Input Method (BambooEngine core, evdev + uinput) for Linux Wayland and X11 (KDE, GNOME, Hyprland, Sway)"
 arch=('x86_64' 'aarch64')
@@ -16,6 +16,10 @@ depends=(
   'kstatusnotifieritem'
   'systemd-libs'
   'wayland'
+)
+optdepends=(
+  'xorg-xkbcomp: apply XKB 8-level overlay on X11 sessions'
+  'xorg-setxkbmap: query and reload active X11 XKB layout'
 )
 makedepends=(
   'gcc'

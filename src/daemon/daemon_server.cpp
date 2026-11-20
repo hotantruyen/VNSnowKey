@@ -6,6 +6,7 @@
  */
 
 #include "daemon_server.hpp"
+#include "../focus/xwayland_env.hpp"
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -15,7 +16,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaObject>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantMap>
 #include <cstdlib>
 #include <fcntl.h>
@@ -24,6 +27,7 @@
 #include <grp.h>
 #include <pwd.h>
 #include <sstream>
+#include <thread>
 #include <unistd.h>
 
 namespace vnsnowkey {
@@ -153,7 +157,34 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
     capture_.setOnGameChatKey([this](bool isExitKey) {
         gameModeMonitor_.notifyChatKeystroke(isExitKey);
     });
+
+    capture_.setOnKeyboardHotplug([this]() {
+        QMetaObject::invokeMethod(this, "onKeyboardHotplug", Qt::QueuedConnection);
+    });
 }
+
+namespace {
+
+XkbCompositorHint backendToXkbHint(DesktopBackend be) {
+    switch (be) {
+        case DesktopBackend::KWin:       return XkbCompositorHint::KWin;
+        case DesktopBackend::GnomeShell: return XkbCompositorHint::GnomeShell;
+        case DesktopBackend::Hyprland:   return XkbCompositorHint::Hyprland;
+        case DesktopBackend::Sway:       return XkbCompositorHint::Sway;
+        case DesktopBackend::X11:        return XkbCompositorHint::X11;
+        case DesktopBackend::None:
+        default:                         return XkbCompositorHint::Auto;
+    }
+}
+
+OutputMethod pickSafeXkbFallbackMethod(DesktopBackend be) {
+    if (be == DesktopBackend::GnomeShell) {
+        return OutputMethod::CtrlShiftU;
+    }
+    return UinputEmitter::hasClipboardBackend() ? OutputMethod::ClipboardCtrlV : OutputMethod::CtrlShiftU;
+}
+
+} // namespace
 
 DaemonServer::~DaemonServer() {
     stop();
@@ -163,14 +194,10 @@ DaemonServer::~DaemonServer() {
 }
 
 bool DaemonServer::start(std::string* errorMsg) {
-    // 1. Install XKB overlay (~/.config/xkb/symbols/us & types/level5) and notify KWin Wayland
+    // 1. Install XKB overlay (~/.config/xkb/symbols/us & types/level5)
     std::string xkbErr;
-    bool wasInstalled = XkbOverlay::isOverlayInstalled();
-    if (emitter_.xkbOverlay().installOverlayFiles("", &xkbErr)) {
-        if (!wasInstalled) {
-            XkbOverlay::reloadKWinXkb();
-        }
-    }
+    const bool wasInstalled = XkbOverlay::isOverlayInstalled();
+    emitter_.xkbOverlay().installOverlayFiles("", &xkbErr);
 
     // 2. Initialize /dev/uinput virtual keyboard
     std::string uinputErr;
@@ -203,7 +230,17 @@ bool DaemonServer::start(std::string* errorMsg) {
         SLOT(onKWinTextInputChanged()));
     gameModeMonitor_.start();
 
-    // 5. Start evdev capture thread
+    // 5. Verify and apply XKB overlay AFTER virtual keyboard creation & desktop backend detection.
+    // On X11 (GNOME Xorg / KDE X11), X server does not read ~/.config/xkb at login, so xkbcomp must run every session.
+    const bool wayland = XkbOverlay::isWaylandSession();
+    verifyAndEnsureXkbOverlay(!wasInstalled || !wayland, false);
+    if (!wayland && !xwayland_env::isIsolatedTestEnv()) {
+        // Guard against late desktop startup daemons (gsd-keyboard / kded) overwriting X11 keymap right after login.
+        QTimer::singleShot(1500, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
+        QTimer::singleShot(4500, this, [this]() { verifyAndEnsureXkbOverlay(true, true); });
+    }
+
+    // 6. Start evdev capture thread
     capture_.updateConfig(config_);
     if (!noGrab_ && emitter_.isInitialized()) {
         std::vector<std::string> explicitDevs;
@@ -375,8 +412,84 @@ bool DaemonServer::ReapplyXkbOverlay() {
     if (!emitter_.xkbOverlay().installOverlayFiles("", &err)) {
         return false;
     }
-    XkbOverlay::reloadKWinXkb();
-    return true;
+    XkbOverlay::reloadCompositorXkb(backendToXkbHint(focusTracker_.activeBackend()));
+    verifyAndEnsureXkbOverlay(false, true);
+    return xkbOverlayVerified_;
+}
+
+void DaemonServer::onKeyboardHotplug() {
+    if (!XkbOverlay::isWaylandSession() && !xwayland_env::isIsolatedTestEnv()) {
+        // Re-check after Xorg/gsd-keyboard settles on newly plugged keyboard (~250ms)
+        QTimer::singleShot(250, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
+    }
+}
+
+void DaemonServer::verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFailure) {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        xkbOverlayVerified_ = true;
+        xkbDiagnosticNote_.clear();
+        capture_.setXkbFallbackMethod(-1);
+        return;
+    }
+
+    const DesktopBackend be = focusTracker_.activeBackend();
+    const XkbCompositorHint hint = backendToXkbHint(be);
+    const bool wayland = XkbOverlay::isWaylandSession();
+
+    std::string layout;
+    std::string variant;
+    XkbOverlay::detectActiveKeyboardLayout(layout, variant, hint);
+    const bool isStandardUs = (layout.empty() || layout == "us") &&
+                              (variant.empty() || variant == "basic");
+
+    if (!isStandardUs) {
+        xkbOverlayVerified_ = false;
+        xkbDiagnosticNote_ = "Layout hiện tại là '" + layout +
+                             (variant.empty() ? "" : "(" + variant + ")") +
+                             "' (khác 'us' mặc định)";
+        capture_.setXkbFallbackMethod(static_cast<int>(pickSafeXkbFallbackMethod(be)));
+        if (notifyOnFailure && !xkbFailureNotified_ && config_.osdEnabled &&
+            config_.defaultOutputMethod == OutputMethod::XkbKeymap) {
+            xkbFailureNotified_ = true;
+            showOsdNotification(QString::fromUtf8("VNSnowKey: Layout khác 'us', đang tạm dùng chế độ gõ dự phòng"));
+        }
+        return;
+    }
+
+    std::string missing;
+    XkbLiveStatus status = XkbOverlay::probeX11KeymapStatus(&missing);
+    if (status == XkbLiveStatus::InactiveOverlayMissing && allowReload) {
+        if (wayland) {
+            XkbOverlay::reloadCompositorXkb(hint);
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        } else {
+            XkbOverlay::applyX11XkbOverlay();
+        }
+        missing.clear();
+        status = XkbOverlay::probeX11KeymapStatus(&missing);
+    }
+
+    if (status == XkbLiveStatus::VerifiedActive ||
+        (wayland && status == XkbLiveStatus::WaylandUnverifiedNoXDisplay)) {
+        xkbOverlayVerified_ = true;
+        xkbFailureNotified_ = false;
+        xkbDiagnosticNote_.clear();
+        capture_.setXkbFallbackMethod(-1);
+        return;
+    }
+
+    xkbOverlayVerified_ = false;
+    if (status == XkbLiveStatus::ToolMissing) {
+        xkbDiagnosticNote_ = missing.empty() ? "Thiếu xkbcomp" : missing;
+    } else {
+        xkbDiagnosticNote_ = "Keymap đang chạy thiếu: " + (missing.empty() ? "agrave" : missing);
+    }
+    capture_.setXkbFallbackMethod(static_cast<int>(pickSafeXkbFallbackMethod(be)));
+    if (notifyOnFailure && !xkbFailureNotified_ && config_.osdEnabled &&
+        config_.defaultOutputMethod == OutputMethod::XkbKeymap) {
+        xkbFailureNotified_ = true;
+        showOsdNotification(QString::fromUtf8("VNSnowKey: XKB chưa nạp được, tạm bật chế độ dự phòng"));
+    }
 }
 
 void DaemonServer::NotifyWindowFocus(
@@ -433,6 +546,11 @@ QString DaemonServer::GetStatusJson() {
 
     obj["uinput_initialized"] = emitter_.isInitialized();
     obj["xkb_overlay_installed"] = XkbOverlay::isOverlayInstalled();
+    obj["xkb_overlay_active"] = xkbOverlayVerified_;
+    obj["xkb_fallback_active"] = (capture_.xkbFallbackMethod() >= 0);
+    if (!xkbDiagnosticNote_.empty()) {
+        obj["xkb_warning"] = QString::fromStdString(xkbDiagnosticNote_);
+    }
     obj["kwin_script_loaded"] = focusTracker_.isKWinScriptLoaded();
     obj["desktop_backend"] = QString::fromUtf8(desktopBackendToString(focusTracker_.activeBackend()));
     obj["desktop_focus_active"] = focusTracker_.isDesktopMonitorActive();
@@ -638,6 +756,33 @@ std::string DaemonServer::buildDiagnosticsReport(
     oss << "    - WAYLAND_DISPLAY: " << (waylandDisp ? waylandDisp : "(unknown)") << "\n";
     oss << "    - XKB Virtual Keymap (~/.config/xkb/symbols/us): "
         << (XkbOverlay::isOverlayInstalled() ? "OK (Đã cài đặt 134 ký tự tiếng Việt)" : "CHƯA CÀI ĐẶT") << "\n";
+    {
+        const XkbCompositorHint hint = backendToXkbHint(focus ? focus->activeBackend() : DesktopBackend::None);
+        std::string layout;
+        std::string variant;
+        XkbOverlay::detectActiveKeyboardLayout(layout, variant, hint);
+        oss << "    - Keyboard Layout đang hoạt động: "
+            << (layout.empty() ? "(unknown)" : layout)
+            << (variant.empty() ? "" : "(" + variant + ")") << "\n";
+        std::string missing;
+        XkbLiveStatus xkbStatus = XkbOverlay::probeX11KeymapStatus(&missing);
+        oss << "    - Trạng thái XKB Keymap thực tế: ";
+        switch (xkbStatus) {
+            case XkbLiveStatus::VerifiedActive:
+                oss << "OK (Đã xác nhận 'agrave', <I178>, <I184>, EIGHT_LEVEL_ALPHABETIC trong keymap sống)\n";
+                break;
+            case XkbLiveStatus::WaylandUnverifiedNoXDisplay:
+                oss << "OK (Wayland thuần; sẽ tự xác minh thêm nếu có XWayland)\n";
+                break;
+            case XkbLiveStatus::ToolMissing:
+                oss << "CHÚ Ý (" << missing << ")\n";
+                break;
+            case XkbLiveStatus::InactiveOverlayMissing:
+                oss << "LỖI (Keymap hiện tại chưa có: " << (missing.empty() ? "agrave" : missing)
+                    << " — chạy 'vnsnowkey ctl reapply-xkb' hoặc đăng xuất/đăng nhập lại)\n";
+                break;
+        }
+    }
     if (focus) {
         DesktopBackend be = focus->activeBackend();
         oss << "    - Desktop Focus Backend: " << desktopBackendToString(be);

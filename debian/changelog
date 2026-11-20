@@ -1,3 +1,11 @@
+vnsnowkey (1.0.1) unstable; urgency=medium
+
+  * Fix X11 reboot & GNOME/KDE XKB overlay application, add live keymap verification and safe fallback.
+  * Add multi-distro clean uninstaller script.
+  * Unlock spellcheck-locked words cleanly on Backspace and allow mid-word oă syllables.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Fri, 20 Nov 2026 17:15:00 +0700
+
 vnsnowkey (1.0.0) unstable; urgency=medium
 
   * Multi-desktop support (KDE Plasma, GNOME Shell, Hyprland, Sway, X11).

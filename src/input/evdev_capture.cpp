@@ -473,22 +473,36 @@ void EvdevCapture::workerLoop(std::vector<std::string> explicitPaths) {
                 if (len > 0) {
                     // Brief pause for udev to apply permissions on newly created /dev/input/eventX
                     std::this_thread::sleep_for(std::chrono::milliseconds(30));
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    size_t offset = 0;
-                    while (offset < static_cast<size_t>(len)) {
-                        const auto* iev = reinterpret_cast<const inotify_event*>(ibuf + offset);
-                        if (iev->len > 0) {
-                            std::string fname(iev->name);
-                            if (fname.rfind("event", 0) == 0) {
-                                std::string fullPath = "/dev/input/" + fname;
-                                if (iev->mask & IN_DELETE) {
-                                    removeDeviceByPath(fullPath);
-                                } else if (iev->mask & (IN_CREATE | IN_ATTRIB)) {
-                                    tryAddDevice(fullPath, false);
+                    bool addedAnyKeyboard = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        size_t offset = 0;
+                        while (offset < static_cast<size_t>(len)) {
+                            const auto* iev = reinterpret_cast<const inotify_event*>(ibuf + offset);
+                            if (iev->len > 0) {
+                                std::string fname(iev->name);
+                                if (fname.rfind("event", 0) == 0) {
+                                    std::string fullPath = "/dev/input/" + fname;
+                                    if (iev->mask & IN_DELETE) {
+                                        removeDeviceByPath(fullPath);
+                                    } else if (iev->mask & (IN_CREATE | IN_ATTRIB)) {
+                                        if (tryAddDevice(fullPath, false)) {
+                                            for (const auto& [addedFd, info] : devicesByFd_) {
+                                                (void)addedFd;
+                                                if (info.path == fullPath && info.isKeyboard) {
+                                                    addedAnyKeyboard = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                            offset += sizeof(inotify_event) + iev->len;
                         }
-                        offset += sizeof(inotify_event) + iev->len;
+                    }
+                    if (addedAnyKeyboard && onKeyboardHotplug_) {
+                        onKeyboardHotplug_();
                     }
                 }
             }
@@ -837,6 +851,12 @@ void EvdevCapture::handleKeyboardEvent(const input_event& ev) {
     OutputMethod outMethod = (appProf && appProf->useCustomOutputMethod)
                                  ? appProf->outputMethod
                                  : config_.defaultOutputMethod;
+    if (outMethod == OutputMethod::XkbKeymap) {
+        int fb = xkbFallbackMethod_.load(std::memory_order_acquire);
+        if (fb >= 0 && fb <= static_cast<int>(OutputMethod::ClipboardCtrlShiftV)) {
+            outMethod = static_cast<OutputMethod>(fb);
+        }
+    }
     int delayUs = (appProf && appProf->delayUs > 0) ? appProf->delayUs : config_.defaultDelayUs;
     bool autocompleteFix = (appProf && appProf->autocompleteFix);
 

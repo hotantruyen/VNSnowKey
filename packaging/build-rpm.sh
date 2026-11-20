@@ -53,7 +53,9 @@ build_one() {
             ;;
     esac
 
-    echo "==> [${target}] Building .rpm inside ${image} using ${RUNTIME}..."
+    local spec_ver
+    spec_ver=$(awk '/^Version:/{print $2; exit}' "${ROOT_DIR}/packaging/vnsnowkey.spec")
+    echo "==> [${target}] Building .rpm (${spec_ver}) inside ${image} using ${RUNTIME}..."
     mkdir -p "${OUT_DIR}/${target}"
 
     "${RUNTIME}" run --rm \
@@ -62,15 +64,15 @@ build_one() {
         "${image}" bash -lc "
             set -euo pipefail
             ${setup_cmd}
-            rm -rf /tmp/rpmbuild && mkdir -p /tmp/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS} /tmp/vnsnowkey-1.0.0
+            rm -rf /tmp/rpmbuild && mkdir -p /tmp/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS} /tmp/vnsnowkey-${spec_ver}
             tar -C /workspace \
                 --exclude=./build \
                 --exclude=./pkg \
                 --exclude=./dist \
                 --exclude=./.git \
                 --exclude='./*.pkg.tar.zst' \
-                -cf - . | tar -C /tmp/vnsnowkey-1.0.0 -xf -
-            tar -C /tmp -czf /tmp/rpmbuild/SOURCES/vnsnowkey-1.0.0.tar.gz vnsnowkey-1.0.0
+                -cf - . | tar -C /tmp/vnsnowkey-${spec_ver} -xf -
+            tar -C /tmp -czf /tmp/rpmbuild/SOURCES/vnsnowkey-${spec_ver}.tar.gz vnsnowkey-${spec_ver}
             cp /workspace/packaging/vnsnowkey.spec /tmp/rpmbuild/SPECS/vnsnowkey.spec
             rpmbuild --define '_topdir /tmp/rpmbuild' -bb /tmp/rpmbuild/SPECS/vnsnowkey.spec
             if [ '${target}' = 'fedora-opensuse' ]; then

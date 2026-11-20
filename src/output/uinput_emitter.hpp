@@ -68,6 +68,7 @@ public:
     // Cross-desktop system clipboard helpers (Klipper D-Bus / wl-clipboard / xclip / xsel)
     static bool readSystemClipboard(std::string& outText);
     static bool writeSystemClipboard(const std::string& text);
+    static bool hasClipboardBackend();
 
     const XkbOverlay& xkbOverlay() const { return xkbOverlay_; }
 
