@@ -74,6 +74,7 @@ private Q_SLOTS:
     void onKWinTextInputChanged();
     void onImBridgeServiceUnregistered(const QString& serviceName);
     void onKeyboardHotplug();
+    void onXkbMappingChanged();
 
 private:
     void emitStateChangedSignal();
@@ -85,6 +86,7 @@ private:
     std::string configPath_;
     bool noGrab_ = false;
     Config config_;
+    bool effectiveVietnameseEnabled_ = true;
     bamboo::SessionProcessor processor_;
     UinputEmitter emitter_;
     EvdevCapture capture_;

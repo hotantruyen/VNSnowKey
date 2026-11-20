@@ -349,6 +349,21 @@ void testKWinFocusTrackerAndPerAppLanguageMemory() {
     tracker.onWindowFocusChanged("org.kde.polkit-kde-authentication-agent-1", "polkit", "Authentication Required", "w3", cfg, true);
     EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, true);
     EXPECT_BOOL_EQ(lastLangState, false);
+
+    // 5. Normal browser/chat tab title containing "Xác thực" or "Nhập mật khẩu" must NOT disable Vietnamese!
+    tracker.onWindowFocusChanged("org.mozilla.firefox", "firefox", "Xác thực OTP - Firefox", "w1", cfg, false);
+    EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+
+    tracker.onWindowFocusChanged("Zalo", "zalo", "Nhập mật khẩu sao lưu - Zalo", "w4", cfg, true);
+    EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+
+    // 6. Entering Konsole (AlwaysEn) -> switching to a brand-new Default app must NOT inherit Konsole's EN!
+    tracker.onWindowFocusChanged("org.kde.konsole", "konsole", "bash — Konsole", "w2", cfg, true);
+    EXPECT_BOOL_EQ(lastLangState, false);
+    tracker.onWindowFocusChanged("libreoffice-writer", "soffice.bin", "Document1 - LibreOffice Writer", "w5", cfg, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
 }
 
 void testGameModeSystemSignalFusionAndMonitor(const std::string& tmpDir) {

@@ -90,6 +90,7 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
       configPath_(configPath.empty() ? Config::defaultConfigPath() : configPath),
       noGrab_(noGrab),
       config_(Config::loadFromFile(configPath_)),
+      effectiveVietnameseEnabled_(config_.vietnameseEnabled),
       capture_(processor_, emitter_),
       imBridgeWatcher_(this) {
     g_activeDaemonInstance = this;
@@ -104,6 +105,7 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
     capture_.setOnLanguageToggled([this](bool newVie) {
         QMetaObject::invokeMethod(this, [this, newVie]() {
             config_.vietnameseEnabled = newVie;
+            effectiveVietnameseEnabled_ = newVie;
             focusTracker_.recordAppLanguageState(newVie);
             config_.saveToFile(configPath_);
             emitStateChangedSignal();
@@ -127,12 +129,15 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
         std::string effectiveApp = resolveEffectiveFocusAppClass(config_, info);
         capture_.notifyFocusChanged(effectiveApp, info.isPasswordDialog);
         if (langChanged && !config_.safeMode) {
-            config_.vietnameseEnabled = newVieState;
-            processor_.setVietnameseEnabled(newVieState);
-            capture_.updateConfig(config_);
+            effectiveVietnameseEnabled_ = newVieState;
+            capture_.setVietnameseEnabled(newVieState);
         }
         updateGameModeForFocus(effectiveApp, info.isPasswordDialog);
         emitStateChangedSignal();
+    });
+
+    focusTracker_.setOnXkbMappingChanged([this]() {
+        QMetaObject::invokeMethod(this, "onXkbMappingChanged", Qt::QueuedConnection);
     });
 
     focusTracker_.setOnRawFocusEvent([this](
@@ -235,6 +240,7 @@ bool DaemonServer::start(std::string* errorMsg) {
     const bool wayland = XkbOverlay::isWaylandSession();
     verifyAndEnsureXkbOverlay(!wasInstalled || !wayland, false);
     if (!wayland && !xwayland_env::isIsolatedTestEnv()) {
+        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
         // Guard against late desktop startup daemons (gsd-keyboard / kded) overwriting X11 keymap right after login.
         QTimer::singleShot(1500, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
         QTimer::singleShot(4500, this, [this]() { verifyAndEnsureXkbOverlay(true, true); });
@@ -277,16 +283,18 @@ void DaemonServer::stop() {
 }
 
 bool DaemonServer::Toggle() {
-    return SetVietnamese(!config_.vietnameseEnabled);
+    return SetVietnamese(!effectiveVietnameseEnabled_);
 }
 
 bool DaemonServer::SetVietnamese(bool enabled) {
     config_.vietnameseEnabled = enabled;
+    effectiveVietnameseEnabled_ = enabled;
     if (enabled && config_.safeMode) {
         config_.safeMode = false;
+        capture_.exitSafeMode();
     }
     focusTracker_.recordAppLanguageState(enabled);
-    capture_.updateConfig(config_);
+    capture_.setVietnameseEnabled(enabled);
     config_.saveToFile(configPath_);
     emitStateChangedSignal();
 
@@ -296,7 +304,7 @@ bool DaemonServer::SetVietnamese(bool enabled) {
             : QString::fromUtf8("Tiếng Anh (EN)");
         showOsdNotification(msg);
     }
-    return config_.vietnameseEnabled;
+    return effectiveVietnameseEnabled_;
 }
 
 bool DaemonServer::SetSafeMode(bool safe) {
@@ -351,7 +359,7 @@ QString DaemonServer::GetStatus() {
     const auto& st = processor_.stats();
     WindowFocusInfo focus = focusTracker_.currentFocus();
     bool isSafe = config_.safeMode || capture_.isInSafeMode();
-    bool isVi = config_.vietnameseEnabled && !isSafe;
+    bool isVi = effectiveVietnameseEnabled_ && !isSafe;
     return QStringLiteral(
                "mode=%1\n"
                "input_method=%2\n"
@@ -378,7 +386,10 @@ QString DaemonServer::GetStatus() {
 bool DaemonServer::ReloadConfig() {
     bool ok = false;
     config_ = Config::loadFromFile(configPath_, &ok);
+    effectiveVietnameseEnabled_ = config_.vietnameseEnabled;
+    focusTracker_.recordAppLanguageState(config_.vietnameseEnabled);
     capture_.updateConfig(config_);
+    verifyAndEnsureXkbOverlay(false, false);
     WindowFocusInfo focus = focusTracker_.currentFocus();
     updateGameModeForFocus(focus.appClass, focus.isPasswordDialog);
     emitStateChangedSignal();
@@ -419,8 +430,15 @@ bool DaemonServer::ReapplyXkbOverlay() {
 
 void DaemonServer::onKeyboardHotplug() {
     if (!XkbOverlay::isWaylandSession() && !xwayland_env::isIsolatedTestEnv()) {
+        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
         // Re-check after Xorg/gsd-keyboard settles on newly plugged keyboard (~250ms)
         QTimer::singleShot(250, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
+    }
+}
+
+void DaemonServer::onXkbMappingChanged() {
+    if (!XkbOverlay::isWaylandSession() && !xwayland_env::isIsolatedTestEnv()) {
+        verifyAndEnsureXkbOverlay(true, false);
     }
 }
 
@@ -497,13 +515,15 @@ void DaemonServer::NotifyWindowFocus(
     const QString& appName,
     const QString& caption,
     const QString& windowId) {
+    // Sync effectiveVietnameseEnabled_ with EvdevCapture in case a hotkey toggle ran right before focus arrived
+    effectiveVietnameseEnabled_ = capture_.vietnameseEnabled();
     focusTracker_.onWindowFocusChanged(
         appClass.toStdString(),
         appName.toStdString(),
         caption.toStdString(),
         windowId.toStdString(),
         config_,
-        config_.vietnameseEnabled);
+        effectiveVietnameseEnabled_);
 }
 
 void DaemonServer::NotifyDesktopCursorVisible(bool visible) {
@@ -529,7 +549,7 @@ void DaemonServer::onImBridgeServiceUnregistered(const QString& /*serviceName*/)
 
 QString DaemonServer::GetStatusJson() {
     QJsonObject obj;
-    obj["vietnamese_enabled"] = config_.vietnameseEnabled && !config_.safeMode;
+    obj["vietnamese_enabled"] = effectiveVietnameseEnabled_ && !config_.safeMode;
     obj["safe_mode"] = config_.safeMode || capture_.isInSafeMode();
     obj["input_method"] = QString::fromStdString(config_.inputMethod);
     obj["output_charset"] = QString::fromStdString(config_.outputCharset);
@@ -604,7 +624,7 @@ void DaemonServer::Quit() {
 void DaemonServer::emitStateChangedSignal() {
     WindowFocusInfo focus = focusTracker_.currentFocus();
     Q_EMIT StateChanged(
-        config_.vietnameseEnabled && !config_.safeMode,
+        effectiveVietnameseEnabled_ && !config_.safeMode,
         QString::fromStdString(config_.inputMethod),
         QString::fromStdString(config_.outputCharset),
         config_.safeMode || capture_.isInSafeMode(),

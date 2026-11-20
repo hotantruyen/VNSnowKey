@@ -523,6 +523,7 @@ int main(int argc, char* argv[]) {
     drainDaemonOutput(outEvFd, screen, 15);
     typePhysicalString("f");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "hoaf");
+    typePhysicalString(" ");
 
     // 7. Test LỖI 2 E2E Backspace & Tone Editing via real evdev -> vnsnowkeyd -> uinput
     // Switch back to Telex first just in case
@@ -952,12 +953,26 @@ int main(int argc, char* argv[]) {
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "a");
     virtKbd.emitKey(KEY_LEFTCTRL, 0);
     drainDaemonOutput(outEvFd, screen, 15);
+    typePhysicalString(" ");
 
     // Normal Ctrl press after releasing must still activate Ctrl modifier as usual
     virtKbd.emitKey(KEY_LEFTCTRL, 1);
     drainDaemonOutput(outEvFd, screen, 15);
     EXPECT_BOOL_EQ(xkb_state_mod_name_is_active(screen.state, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE) != 0, true);
     virtKbd.emitKey(KEY_LEFTCTRL, 0);
+    drainDaemonOutput(outEvFd, screen, 15);
+
+    // 7h. E2E CapsLock ON: both ASCII and Vietnamese letters stay 100% uppercase (no chÀO / CHÀo / TẤn bug!)
+    virtKbd.tapKey(KEY_CAPSLOCK);
+    drainDaemonOutput(outEvFd, screen, 20);
+    screen.clear();
+    typePhysicalString("xin chaof hoof taans truyeefn ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "XIN CHÀO HỒ TẤN TRUYỀN ");
+    virtKbd.tapKey(KEY_CAPSLOCK);
+    drainDaemonOutput(outEvFd, screen, 20);
+    screen.clear();
+    typePhysicalString("xin chaof ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "xin chào ");
     drainDaemonOutput(outEvFd, screen, 15);
     EXPECT_BOOL_EQ(xkb_state_mod_name_is_active(screen.state, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE) == 0, true);
 

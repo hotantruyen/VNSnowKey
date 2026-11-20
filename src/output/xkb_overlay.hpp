@@ -75,6 +75,7 @@ public:
     // Session & live XKB keymap diagnostics/detection helpers
     static bool isWaylandSession();
     static std::string resolveX11Display();
+    static std::optional<bool> queryX11CapsLockState();
     static XkbLiveStatus probeX11KeymapStatus(std::string* missingDetails = nullptr);
     static bool detectActiveKeyboardLayout(
         std::string& outLayout,

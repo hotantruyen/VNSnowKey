@@ -18,6 +18,7 @@
 #include <linux/input.h>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -31,6 +32,7 @@ struct GrabbedDeviceInfo {
     bool isKeyboard = false;
     bool isMouse = false;
     bool isGrabbed = false;
+    uint16_t heldModMask = 0;
 };
 
 class EvdevCapture {
@@ -51,6 +53,10 @@ public:
 
     // Update active configuration & active window profile
     void updateConfig(const Config& cfg);
+    void setVietnameseEnabled(bool enabled);
+    bool vietnameseEnabled() const;
+    uint64_t langToggleEpoch() const { return langToggleEpoch_.load(std::memory_order_acquire); }
+    void setExternalCapsLockHint(std::optional<bool> lockOn);
     void notifyFocusChanged(const std::string& appClass, bool isPasswordDialog);
     void setGameChatActive(bool chatActive, bool signalControlled = false);
     bool isGameChatActive() const;
@@ -93,8 +99,10 @@ private:
     static bool waitAllKeysReleased(int fd, int maxWaitMs = 1500);
     static bool queryCapsLockLed(int fd);
 
-    void handleKeyboardEvent(const input_event& ev);
+    void handleKeyboardEvent(int sourceFd, const input_event& ev);
     void handleMouseEvent(const input_event& ev);
+    void recomputeModifiersFromDevices();
+    bool effectiveCompositorCapsLock() const;
 
     bamboo::SessionProcessor& processor_;
     UinputEmitter& emitter_;
@@ -126,7 +134,10 @@ private:
     bool leftMeta_ = false;
     bool rightMeta_ = false;
     bool capsLockOn_ = false;
+    bool hasExternalCapsLockHint_ = false;
+    bool externalCapsLockOn_ = false;
     uint8_t armedModMask_ = 0;
+    std::atomic<uint64_t> langToggleEpoch_{0};
 
     uint8_t currentModifierMask() const;
     uint8_t activeUinputModifierMask() const;

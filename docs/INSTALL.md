@@ -1,4 +1,4 @@
-# Hướng dẫn cài đặt VNSnowKey (`1.0.1`)
+# Hướng dẫn cài đặt VNSnowKey (`1.0.3`)
 
 VNSnowKey là bộ gõ Tiếng Việt cho Linux Wayland và X11, hỗ trợ **KDE Plasma, GNOME, Hyprland, Sway và X11**.
 
@@ -31,28 +31,28 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ### Arch Linux (Arch, CachyOS, EndeavourOS, Manjaro)
 ```bash
-sudo pacman -U vnsnowkey-1.0.1-x86_64.pkg.tar.zst
+sudo pacman -U vnsnowkey-1.0.3-x86_64.pkg.tar.zst
 ```
 
 ### Ubuntu / Debian (Ubuntu 24.04+, Debian 12+, Linux Mint, Pop!_OS, KDE Neon)
 ```bash
 sudo apt update
-sudo apt install --reinstall ./vnsnowkey_1.0.1_amd64.deb
+sudo apt install --reinstall ./vnsnowkey_1.0.3_amd64.deb
 ```
-> Lưu ý giữ `./` ở đầu đường dẫn để `apt` hiểu là cài file cục bộ và tự tải các thư viện Qt6 phụ thuộc (`--reinstall` giúp cài đè được cả khi máy đang có sẵn bản `1.0.1` trước đó).
+> Lưu ý giữ `./` ở đầu đường dẫn để `apt` hiểu là cài file cục bộ và tự tải các thư viện Qt6 phụ thuộc (`--reinstall` giúp cài đè được cả khi máy đang có sẵn bản `1.0.3` trước đó).
 
 ### Fedora (Fedora 41+)
 ```bash
 # Cài lần đầu hoặc nâng cấp lên bản mới:
-sudo dnf install ./vnsnowkey-1.0.1-x86_64.rpm
+sudo dnf install ./vnsnowkey-1.0.3-x86_64.rpm
 
 # Hoặc cài đè lại khi máy đã cài đúng cùng phiên bản:
-sudo dnf reinstall ./vnsnowkey-1.0.1-x86_64.rpm
+sudo dnf reinstall ./vnsnowkey-1.0.3-x86_64.rpm
 ```
 
 ### openSUSE Tumbleweed
 ```bash
-sudo zypper install --allow-unsigned-rpm --force ./vnsnowkey-1.0.1-x86_64.rpm
+sudo zypper install --allow-unsigned-rpm --force ./vnsnowkey-1.0.3-x86_64.rpm
 ```
 *(Cần cờ `--allow-unsigned-rpm` khi cài file `.rpm` nội bộ chưa ký GPG key công khai.)*
 

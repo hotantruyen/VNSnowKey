@@ -9,6 +9,7 @@
 #include "../engine/bamboo_utils.hpp"
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -36,7 +37,10 @@ bool UinputEmitter::initialize(std::string* errorMsg) {
         return true;
     }
 
-    int fd = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    int fd = ::open("/dev/uinput", O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        fd = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    }
     if (fd < 0) {
         if (errorMsg) {
             *errorMsg = std::string("Cannot open /dev/uinput: ") + std::strerror(errno);
@@ -48,6 +52,10 @@ bool UinputEmitter::initialize(std::string* errorMsg) {
     ::ioctl(fd, UI_SET_EVBIT, EV_SYN);
     ::ioctl(fd, UI_SET_EVBIT, EV_MSC);
     ::ioctl(fd, UI_SET_MSCBIT, MSC_SCAN);
+    ::ioctl(fd, UI_SET_EVBIT, EV_LED);
+    ::ioctl(fd, UI_SET_LEDBIT, LED_NUML);
+    ::ioctl(fd, UI_SET_LEDBIT, LED_CAPSL);
+    ::ioctl(fd, UI_SET_LEDBIT, LED_SCROLLL);
 
     // Enable all standard keyboard keys including F13..F24
     for (int code = 1; code < 248; ++code) {
@@ -81,6 +89,8 @@ bool UinputEmitter::initialize(std::string* errorMsg) {
     activeKeys_.reset();
     physShiftLeft_ = false;
     physShiftRight_ = false;
+    hasVirtualCapsLed_ = false;
+    virtualCapsLockOn_ = false;
     return true;
 }
 
@@ -92,6 +102,8 @@ void UinputEmitter::shutdown() {
         ::close(uinputFd_);
         uinputFd_ = -1;
     }
+    hasVirtualCapsLed_ = false;
+    virtualCapsLockOn_ = false;
 }
 
 std::string UinputEmitter::findSysInputEventPath() const {
@@ -166,6 +178,8 @@ void UinputEmitter::forwardKeyEvent(uint16_t code, int32_t value) {
         physShiftLeft_ = (value != 0);
     } else if (code == KEY_RIGHTSHIFT) {
         physShiftRight_ = (value != 0);
+    } else if (code == KEY_CAPSLOCK && value == 1) {
+        pollVirtualLedEventsLocked();
     }
 
     std::vector<input_event> batch;
@@ -173,6 +187,12 @@ void UinputEmitter::forwardKeyEvent(uint16_t code, int32_t value) {
     appendKey(batch, code, value);
     appendSyn(batch);
     flushBatch(batch, 0);
+
+    // Compositor consumes /dev/uinput FIFO in order: track Lock transition immediately
+    // on press instead of racing against asynchronous kernel EV_LED feedback.
+    if (code == KEY_CAPSLOCK && value == 1 && hasVirtualCapsLed_) {
+        virtualCapsLockOn_ = !virtualCapsLockOn_;
+    }
 }
 
 void UinputEmitter::emitCancelSuperTap() {
@@ -210,7 +230,41 @@ bool UinputEmitter::hasAnyPressedKey() const {
     return activeKeys_.any();
 }
 
-void UinputEmitter::emitViaXkbKeymap(std::vector<input_event>& batch, std::u32string_view text, int delayUs) {
+void UinputEmitter::pollVirtualLedEventsLocked() const {
+    if (uinputFd_ < 0) return;
+    if (std::getenv("VNSNOWKEY_ONLY_DEVICES") != nullptr) {
+        return;
+    }
+    input_event evs[32];
+    while (true) {
+        ssize_t rd = ::read(uinputFd_, evs, sizeof(evs));
+        if (rd <= 0) {
+            break;
+        }
+        size_t cnt = static_cast<size_t>(rd) / sizeof(input_event);
+        for (size_t i = 0; i < cnt; ++i) {
+            if (evs[i].type == EV_LED && evs[i].code == LED_CAPSL) {
+                hasVirtualCapsLed_ = true;
+                virtualCapsLockOn_ = (evs[i].value != 0);
+            }
+        }
+    }
+}
+
+bool UinputEmitter::hasVirtualCapsLed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pollVirtualLedEventsLocked();
+    return hasVirtualCapsLed_;
+}
+
+bool UinputEmitter::virtualCapsLockOn() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pollVirtualLedEventsLocked();
+    return virtualCapsLockOn_;
+}
+
+void UinputEmitter::emitViaXkbKeymap(
+    std::vector<input_event>& batch, std::u32string_view text, int delayUs, bool compositorCapsLock) {
     bool curShift = false;
     bool curL3 = false;
     bool curL5 = false;
@@ -226,10 +280,17 @@ void UinputEmitter::emitViaXkbKeymap(std::vector<input_event>& batch, std::u32st
             continue;
         }
         const KeyChord& chord = *chordOpt;
+        bool wantShift = chord.shift;
+        if (!chord.level3 && !chord.level5 &&
+            ((cp >= U'a' && cp <= U'z') || (cp >= U'A' && cp <= U'Z'))) {
+            // Standard XKB Lock flips Levels 1<->2 on ASCII letters; invert Shift when Lock is ON
+            // so 'N'/'O'/'G' in diffs like "ẤN"/"ÀO" never invert to lowercase under CapsLock.
+            wantShift = (chord.shift != compositorCapsLock);
+        }
         bool modChanged = false;
-        if (curShift != chord.shift) {
-            appendKey(batch, KEY_LEFTSHIFT, chord.shift ? 1 : 0);
-            curShift = chord.shift;
+        if (curShift != wantShift) {
+            appendKey(batch, KEY_LEFTSHIFT, wantShift ? 1 : 0);
+            curShift = wantShift;
             modChanged = true;
         }
         if (curL3 != chord.level3) {
@@ -276,7 +337,8 @@ void UinputEmitter::emitViaXkbKeymap(std::vector<input_event>& batch, std::u32st
     flushBatch(batch, delayUs);
 }
 
-void UinputEmitter::emitViaCtrlShiftU(std::vector<input_event>& batch, std::u32string_view text, int delayUs) {
+void UinputEmitter::emitViaCtrlShiftU(
+    std::vector<input_event>& batch, std::u32string_view text, int delayUs, bool compositorCapsLock) {
     static const uint16_t kHexKeycodes[16] = {
         KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7,
         KEY_8, KEY_9, KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F
@@ -286,7 +348,11 @@ void UinputEmitter::emitViaCtrlShiftU(std::vector<input_event>& batch, std::u32s
         if (cp < 0x80) {
             auto chordOpt = xkbOverlay_.lookupChar(cp);
             if (chordOpt.has_value()) {
-                if (chordOpt->shift) {
+                bool wantShift = chordOpt->shift;
+                if ((cp >= U'a' && cp <= U'z') || (cp >= U'A' && cp <= U'Z')) {
+                    wantShift = (chordOpt->shift != compositorCapsLock);
+                }
+                if (wantShift) {
                     appendKey(batch, KEY_LEFTSHIFT, 1);
                     appendSyn(batch);
                 }
@@ -294,7 +360,7 @@ void UinputEmitter::emitViaCtrlShiftU(std::vector<input_event>& batch, std::u32s
                 appendSyn(batch);
                 appendKey(batch, chordOpt->keycode, 0);
                 appendSyn(batch);
-                if (chordOpt->shift) {
+                if (wantShift) {
                     appendKey(batch, KEY_LEFTSHIFT, 0);
                     appendSyn(batch);
                 }
@@ -430,7 +496,8 @@ void UinputEmitter::emitDiff(
     OutputMethod method,
     int delayUs,
     bool autocompleteFix,
-    int clipboardRestoreDelayMs) {
+    int clipboardRestoreDelayMs,
+    bool compositorCapsLock) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (uinputFd_ < 0) return;
 
@@ -475,10 +542,10 @@ void UinputEmitter::emitDiff(
 
     switch (method) {
         case OutputMethod::XkbKeymap:
-            emitViaXkbKeymap(batch, textToEmit, delayUs);
+            emitViaXkbKeymap(batch, textToEmit, delayUs, compositorCapsLock);
             break;
         case OutputMethod::CtrlShiftU:
-            emitViaCtrlShiftU(batch, textToEmit, delayUs);
+            emitViaCtrlShiftU(batch, textToEmit, delayUs, compositorCapsLock);
             break;
         case OutputMethod::ClipboardCtrlV:
             emitViaClipboard(batch, utf8ToEmit, false, delayUs, clipboardRestoreDelayMs);

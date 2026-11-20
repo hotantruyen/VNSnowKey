@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -108,6 +109,8 @@ public:
 
     void setOnFocusChanged(FocusChangeCallback cb) { onFocusChanged_ = std::move(cb); }
     void setOnRawFocusEvent(RawFocusCallback cb) { onRawFocus_ = std::move(cb); }
+    using XkbMappingChangedCallback = std::function<void()>;
+    void setOnXkbMappingChanged(XkbMappingChangedCallback cb) { onXkbMappingChanged_ = std::move(cb); }
 
     static bool detectPasswordDialog(const std::string& appClass, const std::string& appName, const std::string& caption);
 
@@ -126,9 +129,11 @@ private:
     mutable std::mutex mutex_;
     WindowFocusInfo currentFocus_;
     std::map<std::string, bool> perAppLangMemory_;
+    std::optional<bool> lastDefaultLang_;
     std::set<std::string> recentApps_;
     FocusChangeCallback onFocusChanged_;
     RawFocusCallback onRawFocus_;
+    XkbMappingChangedCallback onXkbMappingChanged_;
     DesktopBackend activeBackend_ = DesktopBackend::None;
     bool scriptRegistered_ = false;
     std::atomic<bool> gnomeMonitorActive_{false};

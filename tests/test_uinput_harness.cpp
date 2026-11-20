@@ -291,6 +291,34 @@ void testUinputKernelLoopbackAndStress(const std::string& tmpCfgDir) {
     EXPECT_STR_EQ(typeIntoUinput("w"), "ư");
     EXPECT_STR_EQ(typeIntoUinput("chuyrene"), "chuyển");
 
+    // 1b. Verify CapsLock ON emits uppercase ASCII + Vietnamese identically (no CHÀo / TẤn / TIẾng inversion!)
+    emitter.forwardKeyEvent(KEY_CAPSLOCK, 1);
+    emitter.forwardKeyEvent(KEY_CAPSLOCK, 0);
+    drainEvdevToReceiver(evFd, rx, 20);
+    rx.screenBuffer.clear();
+    for (const std::u32string& word : {std::u32string(U"XIN "), std::u32string(U"CHÀO "),
+                                       std::u32string(U"HỒ "), std::u32string(U"TẤN "),
+                                       std::u32string(U"TRUYỀN")}) {
+        emitter.emitDiff(0, word, "", OutputMethod::XkbKeymap, 0, false, 45, true);
+        drainEvdevToReceiver(evFd, rx, 25);
+    }
+    EXPECT_STR_EQ(u32ToUtf8(rx.screenBuffer), "XIN CHÀO HỒ TẤN TRUYỀN");
+    rx.screenBuffer.clear();
+    for (const std::u32string& word : {std::u32string(U"TIẾNG "), std::u32string(U"VIỆT")}) {
+        emitter.emitDiff(0, word, "", OutputMethod::XkbKeymap, 0, false, 45, true);
+        drainEvdevToReceiver(evFd, rx, 25);
+    }
+    EXPECT_STR_EQ(u32ToUtf8(rx.screenBuffer), "TIẾNG VIỆT");
+    emitter.forwardKeyEvent(KEY_CAPSLOCK, 1);
+    emitter.forwardKeyEvent(KEY_CAPSLOCK, 0);
+    drainEvdevToReceiver(evFd, rx, 20);
+
+    // 1c. Verify desynced CapsLock (compositor Lock OFF while Shift-adjusted emission requested) stays uppercase
+    rx.screenBuffer.clear();
+    emitter.emitDiff(0, U"XIN CHÀO", "", OutputMethod::XkbKeymap, 0, false, 45, false);
+    drainEvdevToReceiver(evFd, rx, 25);
+    EXPECT_STR_EQ(u32ToUtf8(rx.screenBuffer), "XIN CHÀO");
+
     // 2. High-Speed Typing Stress Test (> 150 keys/sec, well above the >= 15 keys/sec requirement!)
     const std::string kLongInput =
         "Trawm nawm trong coix nguwowif ta, chuwx taif chuwx meenhj kheos laf ghets nhau. "

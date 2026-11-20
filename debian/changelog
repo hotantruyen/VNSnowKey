@@ -1,3 +1,10 @@
+vnsnowkey (1.0.3) unstable; urgency=medium
+
+  * Fix CapsLock case synchronization across ASCII pass-through and Vietnamese diffs (preventing CHÀo / chÀO).
+  * Fix mid-typing Vietnamese loss from browser tab caption false-positives, per-app state leaks, X11 MappingNotify XKB resets, and multi-keyboard modifier disconnects.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Fri, 20 Nov 2026 18:40:00 +0700
+
 vnsnowkey (1.0.1) unstable; urgency=medium
 
   * Fix X11 reboot & GNOME/KDE XKB overlay application, add live keymap verification and safe fallback.

@@ -51,7 +51,8 @@ public:
         OutputMethod method = OutputMethod::XkbKeymap,
         int delayUs = 0,
         bool autocompleteFix = false,
-        int clipboardRestoreDelayMs = 45);
+        int clipboardRestoreDelayMs = 45,
+        bool compositorCapsLock = false);
 
     // Emit an inert modifier tap (KEY_ISO) to cancel single-modifier launcher triggers (e.g. Kickoff/Overview)
     void emitCancelSuperTap();
@@ -61,6 +62,10 @@ public:
 
     // Inspect whether any key is currently depressed on the virtual keyboard
     bool hasAnyPressedKey() const;
+
+    // Live compositor LED_CAPSL feedback received via EV_LED on the uinput device
+    bool hasVirtualCapsLed() const;
+    bool virtualCapsLockOn() const;
 
     // Custom clipboard hooks (defaults to Klipper D-Bus / wl-clipboard / xclip / xsel fallback)
     void setClipboardHooks(ClipboardGetFn getFn, ClipboardSetFn setFn);
@@ -83,9 +88,10 @@ private:
     void appendKey(std::vector<input_event>& batch, uint16_t code, int32_t value);
     void appendSyn(std::vector<input_event>& batch);
     void flushBatch(const std::vector<input_event>& batch, int delayUs);
+    void pollVirtualLedEventsLocked() const;
 
-    void emitViaXkbKeymap(std::vector<input_event>& batch, std::u32string_view text, int delayUs);
-    void emitViaCtrlShiftU(std::vector<input_event>& batch, std::u32string_view text, int delayUs);
+    void emitViaXkbKeymap(std::vector<input_event>& batch, std::u32string_view text, int delayUs, bool compositorCapsLock);
+    void emitViaCtrlShiftU(std::vector<input_event>& batch, std::u32string_view text, int delayUs, bool compositorCapsLock);
     void emitViaClipboard(
         std::vector<input_event>& batch,
         std::string_view utf8Text,
@@ -102,6 +108,8 @@ private:
     std::bitset<KEY_MAX + 1> activeKeys_;
     bool physShiftLeft_ = false;
     bool physShiftRight_ = false;
+    mutable bool hasVirtualCapsLed_ = false;
+    mutable bool virtualCapsLockOn_ = false;
 
     ClipboardGetFn clipboardGetFn_;
     ClipboardSetFn clipboardSetFn_;

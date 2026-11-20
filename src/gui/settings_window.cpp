@@ -1054,7 +1054,7 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addWidget(diagnosticsOutputEdit_, 1);
 
     auto* botRow = new QHBoxLayout();
-    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.1</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
+    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.3</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
     auto* refreshDiagBtn = new QPushButton(QStringLiteral("Kiểm tra lại"), page);
     connect(refreshDiagBtn, &QPushButton::clicked, this, &SettingsWindow::onRefreshDiagnostics);
     botRow->addWidget(verLbl, 1);

@@ -10,6 +10,7 @@
 #include "../focus/xwayland_env.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -439,6 +440,37 @@ std::string XkbOverlay::resolveX11Display() {
         xwayland_env::ensureXAuthorityEnv(false);
     }
     return discovered;
+}
+
+std::optional<bool> XkbOverlay::queryX11CapsLockState() {
+    if (xwayland_env::isIsolatedTestEnv() || isWaylandSession()) {
+        return std::nullopt;
+    }
+    std::string disp = resolveX11Display();
+    if (disp.empty()) {
+        return std::nullopt;
+    }
+    void* libX11 = ::dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    if (!libX11) {
+        return std::nullopt;
+    }
+    auto pXOpenDisplay = reinterpret_cast<void* (*)(const char*)>(::dlsym(libX11, "XOpenDisplay"));
+    auto pXCloseDisplay = reinterpret_cast<int (*)(void*)>(::dlsym(libX11, "XCloseDisplay"));
+    auto pXkbGetIndicatorState = reinterpret_cast<int (*)(void*, unsigned int, unsigned int*)>(
+        ::dlsym(libX11, "XkbGetIndicatorState"));
+    std::optional<bool> result;
+    if (pXOpenDisplay && pXCloseDisplay && pXkbGetIndicatorState) {
+        if (void* dpy = pXOpenDisplay(disp.c_str())) {
+            unsigned int state = 0;
+            // XkbUseCoreKbd = 0x0100; bit 0 is Caps Lock indicator
+            if (pXkbGetIndicatorState(dpy, 0x0100u, &state) == 1) {
+                result = ((state & 1u) != 0);
+            }
+            pXCloseDisplay(dpy);
+        }
+    }
+    ::dlclose(libX11);
+    return result;
 }
 
 bool XkbOverlay::keymapTextHasVnsnowkeyOverlay(const std::string& dumpedKeymap, std::string* missingDetails) {
