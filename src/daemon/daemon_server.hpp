@@ -87,6 +87,7 @@ private:
     bool noGrab_ = false;
     Config config_;
     bool effectiveVietnameseEnabled_ = true;
+    uint64_t lastFocusCheckEpoch_ = 0;
     bamboo::SessionProcessor processor_;
     UinputEmitter emitter_;
     EvdevCapture capture_;

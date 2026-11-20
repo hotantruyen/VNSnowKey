@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vnsnowkey
-Version:        1.0.3
+Version:        1.0.4
 Release:        1
 Summary:        Vietnamese Input Method for Linux Wayland and X11
 
@@ -129,6 +129,9 @@ echo "       - KDE Plasma:    System Settings -> Keyboard -> Virtual Keyboard ->
 %{_datadir}/icons/hicolor/scalable/status/vnsnowkey-en-symbolic.svg
 
 %changelog
+* Fri Nov 20 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.4-1
+- Always reset buffer on Enter/Tab/Esc/autocompleteFix, prevent per-app VI/EN leakage & focus epoch races, cancel mod-only hotkeys on wheel/side-buttons, resync on SYN_DROPPED, and tighten password dialog detection.
+
 * Fri Nov 20 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.3-1
 - Fix CapsLock ASCII + Vietnamese case handling, focus password-caption false positives, per-app language leakage, X11 MappingNotify XKB guard, and per-device modifier tracking.
 

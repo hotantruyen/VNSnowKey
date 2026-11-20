@@ -102,7 +102,9 @@ public:
         bool currentVietnameseEnabled);
 
     // Record user's manual language toggle for the currently focused app
-    void recordAppLanguageState(bool vietnameseEnabled);
+    void recordAppLanguageState(bool vietnameseEnabled, bool rememberPerAppLang = false);
+    // Seed default fallback language used for unseen Default-mode windows
+    void setDefaultLanguageState(bool vietnameseEnabled);
 
     WindowFocusInfo currentFocus() const;
     std::vector<std::string> recentAppClasses() const;

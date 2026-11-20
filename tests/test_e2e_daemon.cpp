@@ -103,8 +103,10 @@ struct VirtualInputDevice {
         ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_LEFT);
         ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_RIGHT);
         ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_MIDDLE);
+        ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_SIDE);
         ::ioctl(uinputFd, UI_SET_RELBIT, REL_X);
         ::ioctl(uinputFd, UI_SET_RELBIT, REL_Y);
+        ::ioctl(uinputFd, UI_SET_RELBIT, REL_WHEEL);
 
         uinput_setup usetup{};
         usetup.id.bustype = BUS_USB;
@@ -165,6 +167,22 @@ struct VirtualInputDevice {
     void tapKey(uint16_t code) {
         emitKey(code, 1);
         emitKey(code, 0);
+    }
+
+    void emitRel(uint16_t code, int32_t value) {
+        if (uinputFd < 0) return;
+        input_event ev{};
+        ev.type = EV_REL;
+        ev.code = code;
+        ev.value = value;
+        ssize_t u1 = ::write(uinputFd, &ev, sizeof(ev));
+        (void)u1;
+        input_event syn{};
+        syn.type = EV_SYN;
+        syn.code = SYN_REPORT;
+        syn.value = 0;
+        ssize_t u2 = ::write(uinputFd, &syn, sizeof(syn));
+        (void)u2;
     }
 
     ~VirtualInputDevice() {
@@ -1185,6 +1203,83 @@ int main(int argc, char* argv[]) {
         drainDaemonOutput(outEvFd, screen, 15);
         typePhysicalString("s ");
         EXPECT_STR_EQ(u32ToUtf8(screen.text), "hoas ");
+
+        // 8b-5. resetOnNavigationKeys=false must STILL reset buffer on Enter/Tab/Esc and browser autocompleteFix
+        customHkCfg.resetOnNavigationKeys = false;
+        customHkCfg.autoRestoreEnglish = false;
+        customHkCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
+        runCmd("./build/vnsnowkey ctl reload");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        screen.clear();
+        typePhysicalString("ok");
+        virtKbd.tapKey(KEY_ENTER);
+        drainDaemonOutput(outEvFd, screen, 15);
+        screen.clear();
+        typePhysicalString("tieengs vieejt ");
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "tiếng việt ");
+
+        screen.clear();
+        typePhysicalString("ok");
+        virtKbd.tapKey(KEY_TAB);
+        drainDaemonOutput(outEvFd, screen, 15);
+        screen.clear();
+        typePhysicalString("chaof ");
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "chào ");
+
+        // Browser (autocompleteFix=true) + resetOnNavigationKeys=false: Left/Enter must reset safely
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"org.mozilla.firefox\" string:\"firefox\" "
+               "string:\"Firefox\" string:\"w_ff_nav\"");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        screen.clear();
+        typePhysicalString("google");
+        virtKbd.tapKey(KEY_LEFT);
+        drainDaemonOutput(outEvFd, screen, 15);
+        screen.clear();
+        typePhysicalString("tooi ");
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "tôi ");
+
+        // 8b-6. Ctrl+Alt + mouse wheel scroll (or BTN_SIDE) must NOT trigger Ctrl+Alt toggle VI->EN
+        customHkCfg.shortcuts.togglePrimary = "Ctrl+Alt";
+        customHkCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
+        runCmd("./build/vnsnowkey ctl reload");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        virtKbd.emitKey(KEY_LEFTCTRL, 1);
+        virtKbd.emitKey(KEY_LEFTALT, 1);
+        virtMouse.emitRel(REL_WHEEL, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        virtKbd.emitKey(KEY_LEFTALT, 0);
+        virtKbd.emitKey(KEY_LEFTCTRL, 0);
+        drainDaemonOutput(outEvFd, screen, 25);
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":true") != std::string::npos, true);
+
+        // Ctrl+Alt + BTN_SIDE must also cancel pending Ctrl+Alt chord
+        virtKbd.emitKey(KEY_LEFTCTRL, 1);
+        virtKbd.emitKey(KEY_LEFTALT, 1);
+        virtMouse.emitKey(BTN_SIDE, 1);
+        virtMouse.emitKey(BTN_SIDE, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        virtKbd.emitKey(KEY_LEFTALT, 0);
+        virtKbd.emitKey(KEY_LEFTCTRL, 0);
+        drainDaemonOutput(outEvFd, screen, 25);
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":true") != std::string::npos, true);
+
+        // Plain Ctrl+Alt (without wheel/side button) still toggles VI -> EN, and unseen app stays VI!
+        virtKbd.emitKey(KEY_LEFTCTRL, 1);
+        virtKbd.emitKey(KEY_LEFTALT, 1);
+        virtKbd.emitKey(KEY_LEFTALT, 0);
+        virtKbd.emitKey(KEY_LEFTCTRL, 0);
+        drainDaemonOutput(outEvFd, screen, 25);
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":false") != std::string::npos, true);
+
+        // Switching to a brand-new unseen Default app must still get VI despite Konsole/Firefox toggled EN!
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"org.kde.kwrite\" string:\"kwrite\" "
+               "string:\"Untitled\" string:\"w_kwrite\"");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":true") != std::string::npos, true);
     }
 
     // 9. Test SIGTERM Clean Exit (daemon must exit cleanly and release EVIOCGRAB on virtKbd)

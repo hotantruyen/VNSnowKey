@@ -1,3 +1,11 @@
+vnsnowkey (1.0.4) unstable; urgency=medium
+
+  * Always reset typing buffer on Enter/Tab/Esc/Insert and browser autocomplete navigation even when reset_on_navigation_keys=false.
+  * Prevent per-app hotkey/tray toggles from leaking EN to config.toml or unseen apps, sync langToggleEpoch against focus races, and preserve live language across IM/charset switches.
+  * Cancel pending mod-only hotkeys (Ctrl+Alt) on mouse wheel scroll or extra mouse buttons, resync held modifiers on SYN_DROPPED, and restrict caption password detection to system/unclassed dialogs.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Fri, 20 Nov 2026 20:10:00 +0700
+
 vnsnowkey (1.0.3) unstable; urgency=medium
 
   * Fix CapsLock case synchronization across ASCII pass-through and Vietnamese diffs (preventing CHÀo / chÀO).

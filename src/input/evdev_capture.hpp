@@ -54,6 +54,7 @@ public:
     // Update active configuration & active window profile
     void updateConfig(const Config& cfg);
     void setVietnameseEnabled(bool enabled);
+    bool setVietnameseEnabledFromFocus(bool enabled, uint64_t expectedEpoch);
     bool vietnameseEnabled() const;
     uint64_t langToggleEpoch() const { return langToggleEpoch_.load(std::memory_order_acquire); }
     void setExternalCapsLockHint(std::optional<bool> lockOn);

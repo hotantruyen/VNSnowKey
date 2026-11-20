@@ -992,7 +992,7 @@ QWidget* SettingsWindow::createAdvancedPage() {
     resetMouseClickCheck_ = new QCheckBox(QStringLiteral("Reset khi click chuột"), page);
     resetFocusChangeCheck_ = new QCheckBox(QStringLiteral("Reset khi đổi cửa sổ"), page);
     resetNavKeysCheck_ = new QCheckBox(
-        QStringLiteral("Reset ở phím điều hướng (↑ ↓ Home End Enter Tab Esc; ← → giữ buffer để sửa)"),
+        QStringLiteral("Reset ở phím điều hướng (↑ ↓ Home End PageUp/Down; Enter/Tab/Esc luôn ngắt từ, ← → giữ buffer)"),
         page);
     auto* rstRow = new QHBoxLayout();
     rstRow->addWidget(resetMouseClickCheck_);
@@ -1054,7 +1054,7 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addWidget(diagnosticsOutputEdit_, 1);
 
     auto* botRow = new QHBoxLayout();
-    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.3</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
+    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.4</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
     auto* refreshDiagBtn = new QPushButton(QStringLiteral("Kiểm tra lại"), page);
     connect(refreshDiagBtn, &QPushButton::clicked, this, &SettingsWindow::onRefreshDiagnostics);
     botRow->addWidget(verLbl, 1);

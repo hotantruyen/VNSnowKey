@@ -104,10 +104,13 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
 
     capture_.setOnLanguageToggled([this](bool newVie) {
         QMetaObject::invokeMethod(this, [this, newVie]() {
-            config_.vietnameseEnabled = newVie;
             effectiveVietnameseEnabled_ = newVie;
-            focusTracker_.recordAppLanguageState(newVie);
-            config_.saveToFile(configPath_);
+            const bool hasFocusedApp = !focusTracker_.currentFocus().appClass.empty();
+            focusTracker_.recordAppLanguageState(newVie, config_.rememberPerAppLang);
+            if (!config_.rememberPerAppLang || !hasFocusedApp) {
+                config_.vietnameseEnabled = newVie;
+                config_.saveToFile(configPath_);
+            }
             emitStateChangedSignal();
             if (config_.osdEnabled) {
                 QString msg = newVie
@@ -129,8 +132,9 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
         std::string effectiveApp = resolveEffectiveFocusAppClass(config_, info);
         capture_.notifyFocusChanged(effectiveApp, info.isPasswordDialog);
         if (langChanged && !config_.safeMode) {
-            effectiveVietnameseEnabled_ = newVieState;
-            capture_.setVietnameseEnabled(newVieState);
+            if (capture_.setVietnameseEnabledFromFocus(newVieState, lastFocusCheckEpoch_)) {
+                effectiveVietnameseEnabled_ = newVieState;
+            }
         }
         updateGameModeForFocus(effectiveApp, info.isPasswordDialog);
         emitStateChangedSignal();
@@ -247,6 +251,7 @@ bool DaemonServer::start(std::string* errorMsg) {
     }
 
     // 6. Start evdev capture thread
+    focusTracker_.setDefaultLanguageState(config_.vietnameseEnabled);
     capture_.updateConfig(config_);
     if (!noGrab_ && emitter_.isInitialized()) {
         std::vector<std::string> explicitDevs;
@@ -287,15 +292,23 @@ bool DaemonServer::Toggle() {
 }
 
 bool DaemonServer::SetVietnamese(bool enabled) {
-    config_.vietnameseEnabled = enabled;
     effectiveVietnameseEnabled_ = enabled;
+    bool needSave = false;
     if (enabled && config_.safeMode) {
         config_.safeMode = false;
         capture_.exitSafeMode();
+        needSave = true;
     }
-    focusTracker_.recordAppLanguageState(enabled);
+    const bool hasFocusedApp = !focusTracker_.currentFocus().appClass.empty();
+    focusTracker_.recordAppLanguageState(enabled, config_.rememberPerAppLang);
     capture_.setVietnameseEnabled(enabled);
-    config_.saveToFile(configPath_);
+    if (!config_.rememberPerAppLang || !hasFocusedApp) {
+        config_.vietnameseEnabled = enabled;
+        needSave = true;
+    }
+    if (needSave) {
+        config_.saveToFile(configPath_);
+    }
     emitStateChangedSignal();
 
     if (config_.osdEnabled) {
@@ -314,7 +327,9 @@ bool DaemonServer::SetSafeMode(bool safe) {
     } else {
         capture_.exitSafeMode();
     }
-    capture_.updateConfig(config_);
+    Config effCfg = config_;
+    effCfg.vietnameseEnabled = effectiveVietnameseEnabled_;
+    capture_.updateConfig(effCfg);
     config_.saveToFile(configPath_);
     emitStateChangedSignal();
     return config_.safeMode;
@@ -387,7 +402,7 @@ bool DaemonServer::ReloadConfig() {
     bool ok = false;
     config_ = Config::loadFromFile(configPath_, &ok);
     effectiveVietnameseEnabled_ = config_.vietnameseEnabled;
-    focusTracker_.recordAppLanguageState(config_.vietnameseEnabled);
+    focusTracker_.setDefaultLanguageState(config_.vietnameseEnabled);
     capture_.updateConfig(config_);
     verifyAndEnsureXkbOverlay(false, false);
     WindowFocusInfo focus = focusTracker_.currentFocus();
@@ -398,7 +413,9 @@ bool DaemonServer::ReloadConfig() {
 
 bool DaemonServer::SetInputMethod(const QString& imName) {
     config_.inputMethod = imName.toStdString();
-    capture_.updateConfig(config_);
+    Config effCfg = config_;
+    effCfg.vietnameseEnabled = effectiveVietnameseEnabled_;
+    capture_.updateConfig(effCfg);
     config_.saveToFile(configPath_);
     emitStateChangedSignal();
     if (config_.osdEnabled) {
@@ -409,7 +426,9 @@ bool DaemonServer::SetInputMethod(const QString& imName) {
 
 bool DaemonServer::SetOutputCharset(const QString& charsetName) {
     config_.outputCharset = charsetName.toStdString();
-    capture_.updateConfig(config_);
+    Config effCfg = config_;
+    effCfg.vietnameseEnabled = effectiveVietnameseEnabled_;
+    capture_.updateConfig(effCfg);
     config_.saveToFile(configPath_);
     emitStateChangedSignal();
     if (config_.osdEnabled) {
@@ -515,7 +534,8 @@ void DaemonServer::NotifyWindowFocus(
     const QString& appName,
     const QString& caption,
     const QString& windowId) {
-    // Sync effectiveVietnameseEnabled_ with EvdevCapture in case a hotkey toggle ran right before focus arrived
+    // Sync effectiveVietnameseEnabled_ and epoch with EvdevCapture in case a hotkey toggle just ran.
+    lastFocusCheckEpoch_ = capture_.langToggleEpoch();
     effectiveVietnameseEnabled_ = capture_.vietnameseEnabled();
     focusTracker_.onWindowFocusChanged(
         appClass.toStdString(),

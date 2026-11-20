@@ -970,18 +970,27 @@ bool FocusTracker::detectPasswordDialog(
         }
     }
 
-    // Never classify normal browsers, chat apps, IDEs, office suites, or terminals as password dialogs
-    // just because a webpage tab/document title contains words like "xác thực" or "nhập mật khẩu".
-    static const char* kNonAuthAppClasses[] = {
-        "firefox", "chromium", "chrome", "brave", "vivaldi", "edge", "opera", "zen",
-        "zalo", "discord", "telegram", "slack", "element",
-        "code", "antigravity", "obsidian", "libreoffice",
-        "konsole", "gnome-terminal", "alacritty", "kitty", "ptyxis", "wezterm", "foot",
+    // Only match window-title keywords on unclassed modal dialogs or system dialog wrappers
+    // (kdialog/zenity/qdialog/xdg-desktop-portal/gnome-shell) so normal apps (browsers, chat, IDEs,
+    // file managers, office suites, Wine/Electron apps) are never misclassified as password prompts.
+    static const char* kDialogWrapperClasses[] = {
+        "kdialog",
+        "zenity",
+        "qdialog",
+        "xdg-desktop-portal",
+        "gnome-shell",
     };
-    for (const char* app : kNonAuthAppClasses) {
-        if (lcClass.find(app) != std::string::npos || lcName.find(app) != std::string::npos) {
-            return false;
+    bool isGenericDialog = lcClass.empty() && lcName.empty();
+    if (!isGenericDialog) {
+        for (const char* dlg : kDialogWrapperClasses) {
+            if (lcClass.find(dlg) != std::string::npos || lcName.find(dlg) != std::string::npos) {
+                isGenericDialog = true;
+                break;
+            }
         }
+    }
+    if (!isGenericDialog) {
+        return false;
     }
 
     static const char* kAuthCaptions[] = {
@@ -1015,6 +1024,11 @@ void FocusTracker::onWindowFocusChanged(
     info.windowId = windowId;
     info.isPasswordDialog = detectPasswordDialog(appClass, appName, caption);
 
+    // Ignore transient unclassed non-password popups so they never erase the active app or flip VI/EN.
+    if (info.appClass.empty() && !info.isPasswordDialog) {
+        return;
+    }
+
     bool newVie = currentVietnameseEnabled;
     bool langChanged = false;
 
@@ -1031,7 +1045,6 @@ void FocusTracker::onWindowFocusChanged(
         } else if (prof) {
             if (prof->mode == AppMode::AlwaysVi) {
                 newVie = true;
-                lastDefaultLang_ = true;
             } else if (prof->mode == AppMode::AlwaysEn || prof->mode == AppMode::Excluded) {
                 newVie = false;
             } else if (config.rememberPerAppLang && !info.appClass.empty()) {
@@ -1039,22 +1052,22 @@ void FocusTracker::onWindowFocusChanged(
                 if (it != perAppLangMemory_.end()) {
                     newVie = it->second;
                 } else {
-                    newVie = lastDefaultLang_.value_or(currentVietnameseEnabled);
+                    newVie = lastDefaultLang_.value_or(config.vietnameseEnabled);
                     perAppLangMemory_[info.appClass] = newVie;
                 }
-                lastDefaultLang_ = newVie;
+            } else {
+                newVie = lastDefaultLang_.value_or(config.vietnameseEnabled);
             }
         } else if (config.rememberPerAppLang && !info.appClass.empty()) {
             auto it = perAppLangMemory_.find(info.appClass);
             if (it != perAppLangMemory_.end()) {
                 newVie = it->second;
             } else {
-                newVie = lastDefaultLang_.value_or(currentVietnameseEnabled);
+                newVie = lastDefaultLang_.value_or(config.vietnameseEnabled);
                 perAppLangMemory_[info.appClass] = newVie;
             }
-            lastDefaultLang_ = newVie;
         } else if (!info.appClass.empty()) {
-            newVie = lastDefaultLang_.value_or(currentVietnameseEnabled);
+            newVie = lastDefaultLang_.value_or(config.vietnameseEnabled);
         }
         langChanged = (newVie != currentVietnameseEnabled);
     }
@@ -1064,14 +1077,21 @@ void FocusTracker::onWindowFocusChanged(
     }
 }
 
-void FocusTracker::recordAppLanguageState(bool vietnameseEnabled) {
+void FocusTracker::recordAppLanguageState(bool vietnameseEnabled, bool rememberPerAppLang) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!currentFocus_.isPasswordDialog) {
-        lastDefaultLang_ = vietnameseEnabled;
+        if (!rememberPerAppLang || currentFocus_.appClass.empty()) {
+            lastDefaultLang_ = vietnameseEnabled;
+        }
         if (!currentFocus_.appClass.empty()) {
             perAppLangMemory_[currentFocus_.appClass] = vietnameseEnabled;
         }
     }
+}
+
+void FocusTracker::setDefaultLanguageState(bool vietnameseEnabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    lastDefaultLang_ = vietnameseEnabled;
 }
 
 WindowFocusInfo FocusTracker::currentFocus() const {

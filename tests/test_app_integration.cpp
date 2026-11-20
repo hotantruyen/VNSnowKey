@@ -359,10 +359,38 @@ void testKWinFocusTrackerAndPerAppLanguageMemory() {
     EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, false);
     EXPECT_BOOL_EQ(lastLangState, true);
 
-    // 6. Entering Konsole (AlwaysEn) -> switching to a brand-new Default app must NOT inherit Konsole's EN!
+    // Unlisted normal apps (Dolphin, Kate, Thunderbird, Zalo.exe) must NOT trigger caption password detection
+    tracker.onWindowFocusChanged("org.kde.dolphin", "dolphin", "Xác thực chứng chỉ — Dolphin", "w4b", cfg, true);
+    EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+
+    tracker.onWindowFocusChanged("org.kde.kate", "kate", "Nhập mật khẩu.txt — Kate", "w4c", cfg, true);
+    EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+
+    // System wrapper dialog / unclassed dialog with auth caption still triggers password bypass cleanly
+    tracker.onWindowFocusChanged("org.kde.kdialog", "kdialog", "Nhập mật khẩu root", "w4d", cfg, true);
+    EXPECT_BOOL_EQ(tracker.currentFocus().isPasswordDialog, true);
+    EXPECT_BOOL_EQ(lastLangState, false);
+
+    // Transient empty-class non-password popup must NOT clear currentFocus or flip VI/EN
+    tracker.onWindowFocusChanged("org.kde.kate", "kate", "Notes.txt", "w4c", cfg, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+    tracker.onWindowFocusChanged("", "", "Popup", "w_pop", cfg, true);
+    EXPECT_STR_EQ(tracker.currentFocus().appClass, "org.kde.kate");
+
+    // 6. Entering Konsole (AlwaysEn) or toggling EN inside a Default app with rememberPerAppLang=true
+    // must NOT leak EN into subsequent brand-new Default apps!
     tracker.onWindowFocusChanged("org.kde.konsole", "konsole", "bash — Konsole", "w2", cfg, true);
     EXPECT_BOOL_EQ(lastLangState, false);
+    tracker.recordAppLanguageState(false, true);
     tracker.onWindowFocusChanged("libreoffice-writer", "soffice.bin", "Document1 - LibreOffice Writer", "w5", cfg, false);
+    EXPECT_BOOL_EQ(lastLangState, true);
+
+    // 7. Manual toggle to EN in one Default app (kate) with rememberPerAppLang=true preserves VI for brand-new kwrite
+    tracker.onWindowFocusChanged("org.kde.kate", "kate", "Notes.txt", "w4c", cfg, false);
+    tracker.recordAppLanguageState(false, true);
+    tracker.onWindowFocusChanged("org.kde.kwrite", "kwrite", "Untitled", "w6", cfg, false);
     EXPECT_BOOL_EQ(lastLangState, true);
 }
 

@@ -424,6 +424,16 @@ void EvdevCapture::setVietnameseEnabled(bool enabled) {
     processor_.setVietnameseEnabled(enabled && !safeMode_.load());
 }
 
+bool EvdevCapture::setVietnameseEnabledFromFocus(bool enabled, uint64_t expectedEpoch) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (langToggleEpoch_.load(std::memory_order_acquire) != expectedEpoch) {
+        return false;
+    }
+    config_.vietnameseEnabled = enabled;
+    processor_.setVietnameseEnabled(enabled && !safeMode_.load());
+    return true;
+}
+
 bool EvdevCapture::vietnameseEnabled() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return config_.vietnameseEnabled;
@@ -626,8 +636,10 @@ void EvdevCapture::workerLoop(std::vector<std::string> explicitPaths) {
 
                 for (size_t k = 0; k < count; ++k) {
                     const input_event& ev = evBatch[k];
-                    if (isMouse && ev.type == EV_KEY &&
-                        (ev.code == BTN_LEFT || ev.code == BTN_RIGHT || ev.code == BTN_MIDDLE)) {
+                    if (isMouse &&
+                        ((ev.type == EV_KEY && ev.code >= BTN_MOUSE && ev.code <= BTN_TASK) ||
+                         (ev.type == EV_REL && (ev.code == REL_WHEEL || ev.code == REL_HWHEEL ||
+                                                ev.code == REL_WHEEL_HI_RES || ev.code == REL_HWHEEL_HI_RES)))) {
                         handleMouseEvent(ev);
                     } else if (isKbd && isGrabbed) {
                         handleKeyboardEvent(fd, ev);
@@ -641,9 +653,18 @@ void EvdevCapture::workerLoop(std::vector<std::string> explicitPaths) {
 }
 
 void EvdevCapture::handleMouseEvent(const input_event& ev) {
+    if (ev.type == EV_REL &&
+        (ev.code == REL_WHEEL || ev.code == REL_HWHEEL ||
+         ev.code == REL_WHEEL_HI_RES || ev.code == REL_HWHEEL_HI_RES)) {
+        // Scrolling while holding Ctrl+Alt (e.g. zoom) must cancel pending modifier-only hotkey chords.
+        armedModMask_ = 0;
+        return;
+    }
     if (ev.type == EV_KEY && ev.value == 1) {
-        if (ev.code == BTN_LEFT || ev.code == BTN_RIGHT || ev.code == BTN_MIDDLE) {
+        if (ev.code >= BTN_MOUSE && ev.code <= BTN_TASK) {
             armedModMask_ = 0;
+        }
+        if (ev.code == BTN_LEFT || ev.code == BTN_RIGHT || ev.code == BTN_MIDDLE) {
             if (config_.resetOnMouseClick || ev.code == BTN_RIGHT || ev.code == BTN_MIDDLE) {
                 processor_.reset();
             } else {
@@ -847,6 +868,41 @@ bool EvdevCapture::triggerKeyHotkey(uint16_t code, uint8_t currentMods) {
 }
 
 void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
+    if (ev.type == EV_SYN && ev.code == SYN_DROPPED) {
+        // Resync held modifier state with kernel EVIOCGKEY so wireless packet drops never stick Ctrl/Alt/Shift.
+        auto devIt = devicesByFd_.find(sourceFd);
+        if (devIt != devicesByFd_.end()) {
+            unsigned long keyBits[kKeyLongs]{};
+            if (::ioctl(sourceFd, EVIOCGKEY(sizeof(keyBits)), keyBits) >= 0) {
+                const uint16_t prevMods = devIt->second.heldModMask;
+                uint16_t liveMods = 0;
+                for (const auto& m : kDeviceModMap) {
+                    if (testBit(keyBits, m.code)) {
+                        liveMods |= m.bit;
+                    }
+                }
+                devIt->second.heldModMask = liveMods;
+                if (prevMods != liveMods) {
+                    recomputeModifiersFromDevices();
+                    uint16_t stillHeld = 0;
+                    for (const auto& [remFd, info] : devicesByFd_) {
+                        (void)remFd;
+                        stillHeld |= info.heldModMask;
+                    }
+                    const uint16_t dropped = prevMods & static_cast<uint16_t>(~stillHeld);
+                    for (const auto& m : kDeviceModMap) {
+                        if (dropped & m.bit) {
+                            emitter_.forwardKeyEvent(m.code, 0);
+                            suppressedModReleases_.set(m.code, false);
+                        }
+                    }
+                }
+            }
+        }
+        armedModMask_ = 0;
+        return;
+    }
+
     if (ev.type != EV_KEY) {
         return;
     }
@@ -1079,6 +1135,8 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
 
     // 8. Handle Navigation / Reset keys (Enter, Tab, Arrows, Home, End, PageUp, PageDown, Esc, Delete)
     if (isNavigationOrResetKey(code)) {
+        const bool isHardLineOrFieldEnd =
+            (code == KEY_ENTER || code == KEY_KPENTER || code == KEY_TAB || code == KEY_ESC || code == KEY_INSERT);
         if (isGameMode && gameChatActive_.load(std::memory_order_acquire) && value == 1 &&
             (code == KEY_ENTER || code == KEY_KPENTER || code == KEY_ESC)) {
             if (!gameSignalControlled_.load(std::memory_order_acquire)) {
@@ -1087,6 +1145,9 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             } else if (onGameChatKey_) {
                 onGameChatKey_(true);
             }
+        } else if (isHardLineOrFieldEnd) {
+            // Enter/Tab/Esc/Insert ALWAYS finish the current line/field regardless of resetOnNavigationKeys or autocompleteFix.
+            processor_.reset();
         } else if (!anyShift && !autocompleteFix &&
             (code == KEY_LEFT || code == KEY_RIGHT || code == KEY_DELETE)) {
             if (code == KEY_LEFT) {
@@ -1096,7 +1157,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             } else {
                 processor_.processDelete();
             }
-        } else if (config_.resetOnNavigationKeys) {
+        } else if (config_.resetOnNavigationKeys || autocompleteFix || anyShift) {
             processor_.reset();
         }
         forwardedKeys_.set(code, true);
