@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vnsnowkey
-Version:        1.0.4
+Version:        1.0.6
 Release:        1
 Summary:        Vietnamese Input Method for Linux Wayland and X11
 
@@ -129,6 +129,14 @@ echo "       - KDE Plasma:    System Settings -> Keyboard -> Virtual Keyboard ->
 %{_datadir}/icons/hicolor/scalable/status/vnsnowkey-en-symbolic.svg
 
 %changelog
+* Sat Nov 21 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.6-1
+- Fix browser URL/search inline autocomplete: replace selected suggestions with atomic KEY_DELETE before diff backspacing, eliminating 'd' -> 'dđ' and diacritic corruption.
+- Eliminate fast-typing Vietnamese lockout: auto-unlock word buffer when evolving into valid syllables (e.g. "truyền") without requiring space or full-word deletion.
+- Prevent premature English locking when auto_restore_english=false and improve mid-typing composition resilience across Wayland and X11.
+
+* Fri Nov 20 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.5-1
+- Synchronize Wayland and X11 output pacing (default_delay_us = 1200), disable intrusive Space+Backspace browser autocompleteFix by default with v2->v3 migration, and harden X11/XWayland XKB application.
+
 * Fri Nov 20 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.4-1
 - Always reset buffer on Enter/Tab/Esc/autocompleteFix, prevent per-app VI/EN leakage & focus epoch races, cancel mod-only hotkeys on wheel/side-buttons, resync on SYN_DROPPED, and tighten password dialog detection.
 

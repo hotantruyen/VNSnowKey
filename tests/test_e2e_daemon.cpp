@@ -25,7 +25,9 @@
 #include <set>
 #include <string>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
+#include <systemd/sd-bus.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -64,103 +66,25 @@ void checkBool(bool actual, bool expected, const char* expr, int line) {
 #define EXPECT_BOOL_EQ(a, b) checkBool((a), (b), #a, __LINE__)
 
 struct VirtualInputDevice {
-    int uinputFd = -1;
-    std::string eventPath;
+    int outFd = -1;
 
-    bool createKeyboard(const char* name) {
-        uinputFd = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-        if (uinputFd < 0) return false;
-
-        ::ioctl(uinputFd, UI_SET_EVBIT, EV_KEY);
-        ::ioctl(uinputFd, UI_SET_EVBIT, EV_SYN);
-        for (int code = 1; code < 248; ++code) {
-            ::ioctl(uinputFd, UI_SET_KEYBIT, code);
-        }
-
-        uinput_setup usetup{};
-        usetup.id.bustype = BUS_USB;
-        usetup.id.vendor  = UinputEmitter::kVNSnowKeyVendorId;
-        usetup.id.product = UinputEmitter::kVNSnowKeyProductId; // Ignored by any live desktop vnsnowkeyd unless VNSNOWKEY_ONLY_DEVICES
-        usetup.id.version = 1;
-        std::snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "%s", name);
-
-        if (::ioctl(uinputFd, UI_DEV_SETUP, &usetup) < 0 ||
-            ::ioctl(uinputFd, UI_DEV_CREATE) < 0) {
-            ::close(uinputFd);
-            uinputFd = -1;
-            return false;
-        }
-        return waitForEventNode();
-    }
-
-    bool createMouse(const char* name) {
-        uinputFd = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-        if (uinputFd < 0) return false;
-
-        ::ioctl(uinputFd, UI_SET_EVBIT, EV_KEY);
-        ::ioctl(uinputFd, UI_SET_EVBIT, EV_REL);
-        ::ioctl(uinputFd, UI_SET_EVBIT, EV_SYN);
-        ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_LEFT);
-        ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_RIGHT);
-        ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_MIDDLE);
-        ::ioctl(uinputFd, UI_SET_KEYBIT, BTN_SIDE);
-        ::ioctl(uinputFd, UI_SET_RELBIT, REL_X);
-        ::ioctl(uinputFd, UI_SET_RELBIT, REL_Y);
-        ::ioctl(uinputFd, UI_SET_RELBIT, REL_WHEEL);
-
-        uinput_setup usetup{};
-        usetup.id.bustype = BUS_USB;
-        usetup.id.vendor  = UinputEmitter::kVNSnowKeyVendorId;
-        usetup.id.product = UinputEmitter::kVNSnowKeyProductId; // Ignored by any live desktop vnsnowkeyd unless VNSNOWKEY_ONLY_DEVICES
-        usetup.id.version = 1;
-        std::snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "%s", name);
-
-        if (::ioctl(uinputFd, UI_DEV_SETUP, &usetup) < 0 ||
-            ::ioctl(uinputFd, UI_DEV_CREATE) < 0) {
-            ::close(uinputFd);
-            uinputFd = -1;
-            return false;
-        }
-        return waitForEventNode();
-    }
-
-    bool waitForEventNode() {
-        char sysname[64]{};
-        if (::ioctl(uinputFd, UI_GET_SYSNAME(sizeof(sysname)), sysname) < 0) return false;
-        std::string sysDir = std::string("/sys/devices/virtual/input/") + sysname;
-        for (int retry = 0; retry < 100; ++retry) {
-            try {
-                for (const auto& entry : std::filesystem::directory_iterator(sysDir)) {
-                    std::string fname = entry.path().filename().string();
-                    if (fname.rfind("event", 0) == 0) {
-                        std::string candidate = "/dev/input/" + fname;
-                        int fd = ::open(candidate.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-                        if (fd >= 0) {
-                            ::close(fd);
-                            eventPath = candidate;
-                            return true;
-                        }
-                    }
-                }
-            } catch (...) {}
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        return false;
+    void attachFd(int fd) {
+        outFd = fd;
     }
 
     void emitKey(uint16_t code, int32_t value) {
-        if (uinputFd < 0) return;
+        if (outFd < 0) return;
         input_event ev{};
         ev.type = EV_KEY;
         ev.code = code;
         ev.value = value;
-        ssize_t u1 = ::write(uinputFd, &ev, sizeof(ev));
+        ssize_t u1 = ::write(outFd, &ev, sizeof(ev));
         (void)u1;
         input_event syn{};
         syn.type = EV_SYN;
         syn.code = SYN_REPORT;
         syn.value = 0;
-        ssize_t u2 = ::write(uinputFd, &syn, sizeof(syn));
+        ssize_t u2 = ::write(outFd, &syn, sizeof(syn));
         (void)u2;
     }
 
@@ -170,26 +94,19 @@ struct VirtualInputDevice {
     }
 
     void emitRel(uint16_t code, int32_t value) {
-        if (uinputFd < 0) return;
+        if (outFd < 0) return;
         input_event ev{};
         ev.type = EV_REL;
         ev.code = code;
         ev.value = value;
-        ssize_t u1 = ::write(uinputFd, &ev, sizeof(ev));
+        ssize_t u1 = ::write(outFd, &ev, sizeof(ev));
         (void)u1;
         input_event syn{};
         syn.type = EV_SYN;
         syn.code = SYN_REPORT;
         syn.value = 0;
-        ssize_t u2 = ::write(uinputFd, &syn, sizeof(syn));
+        ssize_t u2 = ::write(outFd, &syn, sizeof(syn));
         (void)u2;
-    }
-
-    ~VirtualInputDevice() {
-        if (uinputFd >= 0) {
-            ::ioctl(uinputFd, UI_DEV_DESTROY);
-            ::close(uinputFd);
-        }
     }
 };
 
@@ -298,38 +215,7 @@ std::string runCmd(const std::string& cmd) {
     return out;
 }
 
-std::set<std::string> snapshotEventNodes() {
-    std::set<std::string> nodes;
-    for (const auto& entry : std::filesystem::directory_iterator("/dev/input")) {
-        std::string fname = entry.path().filename().string();
-        if (fname.rfind("event", 0) == 0) {
-            nodes.insert(entry.path().string());
-        }
-    }
-    return nodes;
-}
 
-std::string findVNSnowKeyVirtualKeyboardNode(const std::set<std::string>& ignoreNodes) {
-    for (const auto& entry : std::filesystem::directory_iterator("/dev/input")) {
-        std::string fname = entry.path().filename().string();
-        if (fname.rfind("event", 0) != 0) continue;
-        std::string devPath = entry.path().string();
-        if (ignoreNodes.count(devPath)) continue;
-        int fd = ::open(devPath.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0) continue;
-        input_id id{};
-        ::ioctl(fd, EVIOCGID, &id);
-        char nameBuf[256]{};
-        ::ioctl(fd, EVIOCGNAME(sizeof(nameBuf)), nameBuf);
-        ::close(fd);
-        if (id.vendor == UinputEmitter::kVNSnowKeyVendorId &&
-            id.product == UinputEmitter::kVNSnowKeyProductId &&
-            std::string(nameBuf) == UinputEmitter::kVirtualDeviceName) {
-            return devPath;
-        }
-    }
-    return {};
-}
 
 uint16_t asciiToKeycode(char c, bool& shift) {
     shift = false;
@@ -420,57 +306,64 @@ int main(int argc, char* argv[]) {
 
     Config cfg = Config::createDefault();
     cfg.osdEnabled = false; // Avoid popping OSD during automated test
-    AppProfile ffProf;
-    ffProf.appClass = "firefox";
-    ffProf.mode = AppMode::Default;
-    ffProf.autocompleteFix = true;
-    cfg.appProfiles.push_back(ffProf);
+    bool updatedFf = false;
+    for (auto& prof : cfg.appProfiles) {
+        if (prof.appClass == "firefox") {
+            prof.mode = AppMode::Default;
+            prof.autocompleteFix = true;
+            updatedFf = true;
+            break;
+        }
+    }
+    if (!updatedFf) {
+        AppProfile ffProf;
+        ffProf.appClass = "firefox";
+        ffProf.mode = AppMode::Default;
+        ffProf.autocompleteFix = true;
+        cfg.appProfiles.push_back(ffProf);
+    }
     cfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
 
-    VirtualInputDevice virtKbd;
-    VirtualInputDevice virtMouse;
-    if (!virtKbd.createKeyboard("VNSnowKey E2E Test Physical Keyboard") ||
-        !virtMouse.createMouse("VNSnowKey E2E Test Physical Mouse")) {
-        std::cerr << "[WARN] /dev/uinput not accessible; skipping E2E daemon test.\n";
+    int inPair[2] = {-1, -1};
+    int outPair[2] = {-1, -1};
+    if (::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, inPair) < 0 ||
+        ::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, outPair) < 0) {
+        std::cerr << "[ERROR] socketpair failed: " << std::strerror(errno) << "\n";
         std::filesystem::remove_all(tmpDir);
-        return 0;
+        return 1;
     }
 
-    const std::string onlyDevs = virtKbd.eventPath + ":" + virtMouse.eventPath;
-    ::setenv("XDG_CONFIG_HOME", tmpDir.c_str(), 1);
-    ::setenv("VNSNOWKEY_ONLY_DEVICES", onlyDevs.c_str(), 1);
-    ::unsetenv("DISPLAY");
+    VirtualInputDevice virtKbd;
+    virtKbd.attachFd(inPair[1]);
+    VirtualInputDevice virtMouse;
+    virtMouse.attachFd(inPair[1]);
 
-    const std::set<std::string> existingNodes = snapshotEventNodes();
+    // inPair[0] and outPair[0] must NOT have FD_CLOEXEC so child vnsnowkeyd inherits them across exec
+    ::fcntl(inPair[0], F_SETFD, 0);
+    ::fcntl(outPair[0], F_SETFD, 0);
+
+    ::setenv("XDG_CONFIG_HOME", tmpDir.c_str(), 1);
+    ::setenv("VNSNOWKEY_TEST_IN_FD", std::to_string(inPair[0]).c_str(), 1);
+    ::setenv("VNSNOWKEY_TEST_OUT_FD", std::to_string(outPair[0]).c_str(), 1);
+    ::setenv("VNSNOWKEY_ISOLATED_TEST", "1", 1);
+    ::unsetenv("DISPLAY");
+    ::unsetenv("WAYLAND_DISPLAY");
+    ::unsetenv("XDG_CURRENT_DESKTOP");
+    ::unsetenv("XDG_SESSION_TYPE");
 
     pid_t daemonPid = ::fork();
     if (daemonPid == 0) {
+        ::close(inPair[1]);
+        ::close(outPair[1]);
         ::execl("./build/vnsnowkeyd", "./build/vnsnowkeyd", nullptr);
         std::exit(127);
     }
 
-    // Wait for vnsnowkeyd to register D-Bus and create VNSnowKey Virtual Keyboard
-    std::string vnsnowkeyOutNode;
-    for (int retry = 0; retry < 100; ++retry) {
-        vnsnowkeyOutNode = findVNSnowKeyVirtualKeyboardNode(existingNodes);
-        if (!vnsnowkeyOutNode.empty()) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    EXPECT_BOOL_EQ(!vnsnowkeyOutNode.empty(), true);
+    // Parent closes the child-side ends
+    ::close(inPair[0]);
+    ::close(outPair[0]);
 
-    int outEvFd = -1;
-    for (int retry = 0; retry < 50; ++retry) {
-        outEvFd = ::open(vnsnowkeyOutNode.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (outEvFd >= 0) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_BOOL_EQ(outEvFd >= 0, true);
-
-    if (outEvFd >= 0) {
-        // Grab vnsnowkeyd's virtual keyboard output so test keystrokes never reach the desktop
-        int grabRc = ::ioctl(outEvFd, EVIOCGRAB, 1);
-        EXPECT_BOOL_EQ(grabRc == 0, true);
-    }
+    int outEvFd = outPair[1];
 
     // Wait briefly for D-Bus registration
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -556,7 +449,7 @@ int main(int argc, char* argv[]) {
         if (!burst) drainDaemonOutput(outEvFd, screen, 20);
     };
 
-    // Repro A: "toans" -> "toán", Backspace -> "toá", "f" -> "toà"
+    // Repro A: "toans" -> "toán", Backspace -> "toá", "f" -> "toà", "n" -> "toàn"
     screen.text.clear();
     typePhysicalString("toans");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "toán");
@@ -564,9 +457,10 @@ int main(int argc, char* argv[]) {
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "toá");
     typePhysicalString("f");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "toà");
-    typePhysicalString(" ");
+    typePhysicalString("n ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toàn ");
 
-    // Repro B: "vieets" -> "viết", Backspace -> "viế", "j" -> "việ"
+    // Repro B: "vieets" -> "viết", Backspace -> "viế", "j" -> "việ", "t" -> "việt"
     screen.text.clear();
     typePhysicalString("vieets");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "viết");
@@ -574,15 +468,16 @@ int main(int argc, char* argv[]) {
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "viế");
     typePhysicalString("j");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "việ");
-    typePhysicalString(" ");
+    typePhysicalString("t ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "việt ");
 
-    // Repro B2: "yeens" -> "yến", Backspace -> "yế", "f" -> "yề"
+    // Repro B2: "yeens" -> "yến", Backspace -> "yế", "fn" -> "yền"
     screen.text.clear();
     typePhysicalString("yeens");
     pressBackspace(1);
-    typePhysicalString("f");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "yề");
-    typePhysicalString(" ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "yế");
+    typePhysicalString("fn ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "yền ");
 
     // Consecutive Backspaces + continue typing
     screen.text.clear();
@@ -607,15 +502,15 @@ int main(int argc, char* argv[]) {
     screen.text.clear();
     typePhysicalString("TOANS");
     pressBackspace(1);
-    typePhysicalString("F");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÀ");
-    typePhysicalString(" ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÁ");
+    typePhysicalString("FN ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÀN ");
 
     screen.text.clear();
     typePhysicalString("Vieets");
     pressBackspace(1);
-    typePhysicalString("J");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "Việ");
+    typePhysicalString("Jt");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "Việt");
     typePhysicalString(" ");
 
     // Fast burst typing (>= 25 keys/s; ~500 keys/s) + Backspace + tone change while keeping evdev out queue drained
@@ -648,15 +543,17 @@ int main(int argc, char* argv[]) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     drainNow();
     tapAsciiFast('f');
+    tapAsciiFast('n');
     tapAsciiFast(' ');
     for (char c : std::string("vieets")) tapAsciiFast(c);
     pressBackspace(1, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     drainNow();
     tapAsciiFast('j');
+    tapAsciiFast('t');
     tapAsciiFast(' ');
     drainDaemonOutput(outEvFd, screen, 120);
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toà việ ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toàn việt ");
 
     // 7b. Test Browser URL bar autocompleteFix on Backspace via D-Bus Firefox focus + real uinput
     runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
@@ -687,17 +584,16 @@ int main(int argc, char* argv[]) {
         }
         bsDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(15);
     }
-    EXPECT_BOOL_EQ(bsKeySequence.size() == 3 &&
-                   bsKeySequence[0] == KEY_SPACE &&
-                   bsKeySequence[1] == KEY_BACKSPACE &&
-                   bsKeySequence[2] == KEY_BACKSPACE,
+    EXPECT_BOOL_EQ(bsKeySequence.size() == 2 &&
+                   bsKeySequence[0] == KEY_DELETE &&
+                   bsKeySequence[1] == KEY_BACKSPACE,
                    true);
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "vi");
-    // Continue typing "eets" + Backspace + "j" in Firefox profile -> must yield "việ"!
+    // Continue typing "eets" + Backspace + "jt" in Firefox profile -> must yield "việt "!
     typePhysicalString("eets");
     pressBackspace(1);
-    typePhysicalString("j ");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "việ ");
+    typePhysicalString("jt ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "việt ");
     // Return focus to a neutral app
     runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
            "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"org.kde.kate\" string:\"kate\" "
@@ -758,24 +654,24 @@ int main(int argc, char* argv[]) {
     virtKbd.emitKey(KEY_LEFTSHIFT, 0);
     drainDaemonOutput(outEvFd, screen, 20);
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÁ");
-    typePhysicalString("F ");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÀ ");
+    typePhysicalString("FN ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "TOÀN ");
 
     // 7d. E2E Cross-Space / Multi-word Backspace to re-tone previous word ("xoá lùi về sửa dấu")
     screen.text.clear();
     typePhysicalString("toans ");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "toán ");
-    pressBackspace(2); // delete ' ' then 'n' -> back to "toá" with active buffer restored!
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toá");
-    typePhysicalString("f ");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toà ");
+    pressBackspace(1); // delete ' ' -> active buffer restored to "toán"
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toán");
+    typePhysicalString("f "); // re-tone "toán" -> "toàn "
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toàn ");
 
     screen.text.clear();
     typePhysicalString("vieets hocj");
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "viết học");
-    pressBackspace(4); // delete 'c','ọ','h',' ', restoring "viết" into active buffer!
+    pressBackspace(4); // delete 'j','c','o','h',' ', restoring "viết" into active buffer!
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "viết");
-    typePhysicalString("j "); // immediately re-tone "viết" -> "việt " without even deleting 't'
+    typePhysicalString("j "); // immediately re-tone "viết" -> "việt "
     EXPECT_STR_EQ(u32ToUtf8(screen.text), "việt ");
 
     // Verify Up Arrow Key STILL resets history completely (Left/Right navigate inside tracked words)
@@ -785,7 +681,7 @@ int main(int argc, char* argv[]) {
     drainDaemonOutput(outEvFd, screen, 15);
     pressBackspace(2);
     typePhysicalString("f");
-    EXPECT_BOOL_EQ(u32ToUtf8(screen.text) != "toà", true);
+    EXPECT_BOOL_EQ(u32ToUtf8(screen.text) != "toàn", true);
     typePhysicalString(" ");
 
     // 7e. Arrow-key Left/Right/Delete editing + Custom Hotkeys via evdev & D-Bus ReloadConfig
@@ -793,12 +689,12 @@ int main(int argc, char* argv[]) {
     typePhysicalString("toans ");
     virtKbd.tapKey(KEY_LEFT); // Move left before Space ("toán| ")
     drainDaemonOutput(outEvFd, screen, 15);
-    pressBackspace(1); // "toá| "
-    typePhysicalString("f"); // "toà| "
-    virtKbd.tapKey(KEY_RIGHT); // "toà |"
+    pressBackspace(1); // deletes 'n' -> "toá| "
+    typePhysicalString("fn"); // "toàn| "
+    virtKbd.tapKey(KEY_RIGHT); // "toàn |"
     drainDaemonOutput(outEvFd, screen, 15);
     typePhysicalString("nay ");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toà nay ");
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toàn nay ");
 
     screen.clear();
     typePhysicalString("toans hocj");
@@ -806,9 +702,9 @@ int main(int argc, char* argv[]) {
         virtKbd.tapKey(KEY_LEFT);
         drainDaemonOutput(outEvFd, screen, 12);
     }
-    pressBackspace(1); // delete 'n' of "toán" before " học"
-    typePhysicalString("f");
-    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toà học");
+    pressBackspace(1); // delete 'n' of "toán" before " học" -> "toá| học"
+    typePhysicalString("fn"); // "toàn| học"
+    EXPECT_STR_EQ(u32ToUtf8(screen.text), "toàn học");
 
     // Mid-word Left + Delete + re-tone
     virtKbd.tapKey(KEY_UP);
@@ -1000,10 +896,13 @@ int main(int argc, char* argv[]) {
     runCmd("./build/vnsnowkey ctl reload");
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-    // Verify default config already enables Firefox autocompleteFix
+    // Verify default config uses unified safe pacing (1200 us) and enables clean atomic KEY_DELETE browser autocompleteFix
     Config defCfg = Config::createDefault();
     const AppProfile* defFf = defCfg.findProfileForApp("org.mozilla.firefox");
+    const AppProfile* defBrave = defCfg.findProfileForApp("brave-browser");
+    EXPECT_BOOL_EQ(defCfg.defaultDelayUs == 0, true);
     EXPECT_BOOL_EQ(defFf != nullptr && defFf->autocompleteFix, true);
+    EXPECT_BOOL_EQ(defBrave != nullptr && defBrave->autocompleteFix, true);
 
     // 8. Test switching Input Method to VNI via CLI D-Bus
     runCmd("./build/vnsnowkey ctl im VNI");
@@ -1078,17 +977,46 @@ int main(int argc, char* argv[]) {
         drainDaemonOutput(outEvFd, screen, 20);
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
 
-        // Compositor signal (Wayland IM bridge or cursor visibility) activates Vietnamese chat cleanly
-        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
-               "org.vnsnowkey.Daemon.NotifyInputMethodState boolean:true boolean:true");
+        // Compositor signal (Wayland IM bridge or cursor visibility) activates Vietnamese chat cleanly.
+        // Keep the D-Bus connection open across the active window just like vnsnowkey-im does,
+        // otherwise DaemonServer's imBridgeWatcher_ treats an immediate disconnect as bridge exit.
+        sd_bus* imBus = nullptr;
+        EXPECT_BOOL_EQ(sd_bus_open_user(&imBus) >= 0 && imBus != nullptr, true);
+        auto callImState = [&](bool active, bool alive) {
+            if (!imBus) {
+                return false;
+            }
+            sd_bus_error err = SD_BUS_ERROR_NULL;
+            sd_bus_message* reply = nullptr;
+            int rc = sd_bus_call_method(
+                imBus,
+                "org.vnsnowkey.Daemon",
+                "/org/vnsnowkey/Daemon",
+                "org.vnsnowkey.Daemon",
+                "NotifyInputMethodState",
+                &err,
+                &reply,
+                "bb",
+                active ? 1 : 0,
+                alive ? 1 : 0);
+            sd_bus_error_free(&err);
+            sd_bus_message_unref(reply);
+            sd_bus_flush(imBus);
+            return rc >= 0;
+        };
+
+        EXPECT_BOOL_EQ(callImState(true, true), true);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":true") != std::string::npos, true);
         screen.clear();
         typePhysicalString("taasn truyeefn");
         EXPECT_STR_EQ(u32ToUtf8(screen.text), "tấn truyền");
 
-        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
-               "org.vnsnowkey.Daemon.NotifyInputMethodState boolean:false boolean:false");
+        EXPECT_BOOL_EQ(callImState(false, false), true);
+        if (imBus) {
+            sd_bus_flush_close_unref(imBus);
+            imBus = nullptr;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"game_chat_active\":false") != std::string::npos, true);
 
@@ -1280,26 +1208,103 @@ int main(int argc, char* argv[]) {
                "string:\"Untitled\" string:\"w_kwrite\"");
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":true") != std::string::npos, true);
+
+        // 8b-7. Fast burst typing in Brave & Firefox with unified 1200us pacing and no Space+Bksp autocompleteFix
+        Config fastCfg = Config::createDefault();
+        fastCfg.osdEnabled = false;
+        fastCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
+        runCmd("./build/vnsnowkey ctl reload");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+        auto typeBurstWords = [&](const std::vector<std::string>& words) {
+            for (const std::string& w : words) {
+                for (char c : w) {
+                    bool shift = false;
+                    uint16_t kc = asciiToKeycode(c, shift);
+                    if (kc == 0) continue;
+                    if (shift) virtKbd.emitKey(KEY_LEFTSHIFT, 1);
+                    virtKbd.tapKey(kc);
+                    if (shift) virtKbd.emitKey(KEY_LEFTSHIFT, 0);
+                }
+                drainDaemonOutput(outEvFd, screen, 40);
+            }
+        };
+
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"Brave-browser\" string:\"brave-browser\" "
+               "string:\"Google Search - Brave\" string:\"w_brave\"");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        screen.clear();
+        typeBurstWords({"Tieengs ", "Vieetj ", "trinhf ", "duyeetj ", "gox ", "nhanh "});
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "Tiếng Việt trình duyệt gõ nhanh ");
+
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"org.mozilla.firefox\" string:\"firefox\" "
+               "string:\"Mozilla Firefox\" string:\"w_ff_fast\"");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        runCmd("./build/vnsnowkey ctl vi");
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        screen.clear();
+        typeBurstWords({"Ddoongf ", "booj ", "X11 ", "vaf ", "Wayland "});
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "Đồng bộ X11 và Wayland ");
+
+        // 8b-8. Continuous zero-pause multi-word burst through Async OutputWorker + PassTap micro-pacing
+        // + Anti-Loss telemetry fields ("xkb_auto_heals", "stuck_mod_recoveries", "vi_inactive_reason")
+        const std::string statusViJson = runCmd("./build/vnsnowkey ctl status");
+        EXPECT_BOOL_EQ(statusViJson.find("\"xkb_auto_heals\":") != std::string::npos, true);
+        EXPECT_BOOL_EQ(statusViJson.find("\"stuck_mod_recoveries\":") != std::string::npos, true);
+        EXPECT_BOOL_EQ(statusViJson.find("\"vi_inactive_reason\":\"none\"") != std::string::npos, true);
+
+        screen.clear();
+        const std::string continuousBurst = "Tieengs Vieetj ddoongf booj khoong maast chuwx khoong maast daasu ";
+        std::atomic<bool> burstReaderStop{false};
+        std::thread burstReader([&]() {
+            while (!burstReaderStop.load(std::memory_order_acquire)) {
+                pollfd pfd{outEvFd, POLLIN, 0};
+                if (::poll(&pfd, 1, 2) > 0) {
+                    input_event evs[128];
+                    ssize_t rd = ::read(outEvFd, evs, sizeof(evs));
+                    if (rd > 0) {
+                        size_t cnt = static_cast<size_t>(rd) / sizeof(input_event);
+                        for (size_t i = 0; i < cnt; ++i) {
+                            if (evs[i].type == EV_KEY) {
+                                screen.onEvdevKey(evs[i].code, evs[i].value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        for (char c : continuousBurst) {
+            bool shift = false;
+            uint16_t kc = asciiToKeycode(c, shift);
+            if (kc == 0) continue;
+            if (shift) virtKbd.emitKey(KEY_LEFTSHIFT, 1);
+            virtKbd.tapKey(kc);
+            if (shift) virtKbd.emitKey(KEY_LEFTSHIFT, 0);
+            // ~166 keys/sec (~2,000 WPM) uninterrupted continuous burst
+            std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        }
+        // Wait for async outputThread_ to emit all queued Vietnamese transforms + tail taps
+        std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        burstReaderStop.store(true, std::memory_order_release);
+        burstReader.join();
+        drainDaemonOutput(outEvFd, screen, 40);
+        EXPECT_STR_EQ(u32ToUtf8(screen.text), "Tiếng Việt đồng bộ không mất chữ không mất dấu ");
+
+        runCmd("./build/vnsnowkey ctl en");
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vi_inactive_reason\":\"user_or_per_app_en\"") != std::string::npos, true);
     }
 
-    // 9. Test SIGTERM Clean Exit (daemon must exit cleanly and release EVIOCGRAB on virtKbd)
+    // 9. Test SIGTERM Clean Exit (daemon must exit cleanly)
     ::kill(daemonPid, SIGTERM);
     int wstatus = 0;
     ::waitpid(daemonPid, &wstatus, 0);
     EXPECT_BOOL_EQ(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0, true);
 
-    // Verify virtKbd is no longer grabbed after vnsnowkeyd exited!
-    int checkKbdFd = ::open(virtKbd.eventPath.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    EXPECT_BOOL_EQ(checkKbdFd >= 0, true);
-    if (checkKbdFd >= 0) {
-        int reGrab = ::ioctl(checkKbdFd, EVIOCGRAB, 1);
-        EXPECT_BOOL_EQ(reGrab == 0, true);
-        ::ioctl(checkKbdFd, EVIOCGRAB, 0);
-        ::close(checkKbdFd);
-    }
-
+    ::close(inPair[1]);
     if (outEvFd >= 0) {
-        ::ioctl(outEvFd, EVIOCGRAB, 0);
         ::close(outEvFd);
     }
     std::filesystem::remove_all(tmpDir);

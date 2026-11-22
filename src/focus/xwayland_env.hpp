@@ -16,7 +16,10 @@
 namespace vnsnowkey::xwayland_env {
 
 inline bool isIsolatedTestEnv() {
-    if (std::getenv("VNSNOWKEY_ONLY_DEVICES") != nullptr) {
+    if (std::getenv("VNSNOWKEY_ONLY_DEVICES") != nullptr ||
+        std::getenv("VNSNOWKEY_TEST_IN_FD") != nullptr ||
+        std::getenv("VNSNOWKEY_TEST_OUT_FD") != nullptr ||
+        std::getenv("VNSNOWKEY_ISOLATED_TEST") != nullptr) {
         return true;
     }
     const char* qpa = std::getenv("QT_QPA_PLATFORM");

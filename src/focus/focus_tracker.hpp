@@ -101,8 +101,10 @@ public:
         const Config& config,
         bool currentVietnameseEnabled);
 
-    // Record user's manual language toggle for the currently focused app
+    // Record user's manual language toggle for the currently focused app (or an explicit appClass snapshot)
     void recordAppLanguageState(bool vietnameseEnabled, bool rememberPerAppLang = false);
+    void recordAppLanguageStateForApp(
+        const std::string& appClass, bool vietnameseEnabled, bool rememberPerAppLang = false);
     // Seed default fallback language used for unseen Default-mode windows
     void setDefaultLanguageState(bool vietnameseEnabled);
 

@@ -154,8 +154,9 @@ Config Config::createDefault() {
     bitwarden.mode = AppMode::Excluded;
     cfg.appProfiles.push_back(bitwarden);
 
-    // 2. Browsers with URL bar inline autocomplete: enable autocompleteFix cleanly
-    for (const char* browser : {"firefox", "chromium", "google-chrome", "brave", "vivaldi", "microsoft-edge"}) {
+    // 2. Browsers: autocompleteFix = true (using atomic KEY_DELETE to cancel inline autocomplete suggestions
+    //    without inserting spaces or dropping characters in Omnibox/URL search bars or web text inputs).
+    for (const char* browser : {"firefox", "chromium", "google-chrome", "brave", "vivaldi", "microsoft-edge", "opera"}) {
         AppProfile prof;
         prof.appClass = browser;
         prof.mode = AppMode::Default;
@@ -593,10 +594,34 @@ Config Config::fromToml(std::string_view tomlText) {
         }
     }
 
-    if (parsedConfigVersion < kCurrentConfigVersion) {
+    if (parsedConfigVersion < 2) {
         if (clearedDefaultProfiles && cfg.findProfileForApp("minecraft") == nullptr) {
             cfg.appProfiles.push_back(makeDefaultMinecraftProfile());
         }
+    }
+    if (parsedConfigVersion < 4) {
+        if (cfg.defaultDelayUs == 0) {
+            cfg.defaultDelayUs = 1200;
+        }
+        auto isDefaultBrowser = [](const std::string& cls) {
+            for (const char* b : {"firefox", "chromium", "google-chrome", "brave", "vivaldi", "microsoft-edge", "opera"}) {
+                if (cls == b) return true;
+            }
+            return false;
+        };
+        for (auto& prof : cfg.appProfiles) {
+            if (isDefaultBrowser(prof.appClass) && prof.mode == AppMode::Default &&
+                !prof.useCustomOutputMethod && prof.delayUs == 0) {
+                prof.autocompleteFix = true;
+            }
+        }
+    }
+    if (parsedConfigVersion < 5) {
+        if (cfg.defaultDelayUs == 1200) {
+            cfg.defaultDelayUs = 0;
+        }
+    }
+    if (parsedConfigVersion < kCurrentConfigVersion) {
         cfg.configVersion = kCurrentConfigVersion;
     }
 
@@ -653,8 +678,9 @@ Config Config::loadFromFile(const std::string& path, bool* loadedOk) {
     std::string content = oss.str();
     if (loadedOk) *loadedOk = true;
     Config cfg = fromToml(content);
-    if ((path.empty() || targetPath == defaultConfigPath())
-        && content.find("config_version") == std::string::npos) {
+    if ((path.empty() || targetPath == defaultConfigPath()) &&
+        (content.find("config_version") == std::string::npos ||
+         content.find("config_version = " + std::to_string(kCurrentConfigVersion)) == std::string::npos)) {
         cfg.saveToFile(targetPath);
     }
     return cfg;

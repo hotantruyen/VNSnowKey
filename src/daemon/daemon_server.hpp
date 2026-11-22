@@ -17,6 +17,7 @@
 #include <QDBusServiceWatcher>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <string>
 
 namespace vnsnowkey {
@@ -75,6 +76,8 @@ private Q_SLOTS:
     void onImBridgeServiceUnregistered(const QString& serviceName);
     void onKeyboardHotplug();
     void onXkbMappingChanged();
+    void onXkbWatchdogTimer();
+    void onPrepareForSleep(bool goingToSleep);
 
 private:
     void emitStateChangedSignal();
@@ -82,6 +85,8 @@ private:
     void updateGameModeForFocus(const std::string& appClass, bool isPasswordDialog);
     bool queryKWinTextInputSupported() const;
     void verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFailure);
+    void runXkbWatchdogCheck(bool forceCheck);
+    QString computeViInactiveReason() const;
 
     std::string configPath_;
     bool noGrab_ = false;
@@ -94,6 +99,10 @@ private:
     FocusTracker focusTracker_;
     GameModeMonitor gameModeMonitor_;
     QDBusServiceWatcher imBridgeWatcher_;
+    QTimer xkbWatchdogTimer_;
+    std::string lastVerifiedX11Display_;
+    uint64_t xkbAutoHealCount_ = 0;
+    bool sysSleepConnected_ = false;
     bool xkbOverlayVerified_ = true;
     bool xkbFailureNotified_ = false;
     std::string xkbDiagnosticNote_;

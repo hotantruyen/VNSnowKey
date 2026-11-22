@@ -1,3 +1,19 @@
+vnsnowkey (1.0.6) unstable; urgency=medium
+
+  * Fix browser URL and search bar inline autocomplete: replace selected suggestions with atomic KEY_DELETE before diff backspacing, eliminating 'd' -> 'dđ' and diacritic corruption.
+  * Eliminate fast-typing Vietnamese lockout: auto-unlock word buffer when evolving into valid syllables (e.g. "truyền") without requiring space or full-word deletion.
+  * Prevent premature English locking when auto_restore_english=false and improve mid-typing composition resilience across Wayland and X11.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Sat, 21 Nov 2026 18:00:00 +0700
+
+vnsnowkey (1.0.5) unstable; urgency=medium
+
+  * Unify Wayland and X11 output pacing (default_delay_us = 1200) to prevent dropped accents/characters during fast typing on X11, XWayland, and Wayland browsers.
+  * Disable intrusive Space+Backspace browser autocomplete_fix by default (and migrate v2 -> v3 configs), restoring clean Vietnamese input in Firefox, Brave, Chrome, and Edge.
+  * Harden X11 xkbcomp fallback and ensure XWayland displays receive the 8-level overlay when started lazily.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Fri, 20 Nov 2026 22:25:00 +0700
+
 vnsnowkey (1.0.4) unstable; urgency=medium
 
   * Always reset typing buffer on Enter/Tab/Esc/Insert and browser autocomplete navigation even when reset_on_navigation_keys=false.

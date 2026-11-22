@@ -31,8 +31,9 @@ public:
     UinputEmitter(const UinputEmitter&) = delete;
     UinputEmitter& operator=(const UinputEmitter&) = delete;
 
-    // Create virtual keyboard on /dev/uinput
+    // Create virtual keyboard on /dev/uinput, or attach to an existing fd (e.g. socketpair for isolated tests)
     bool initialize(std::string* errorMsg = nullptr);
+    bool initializeWithFd(int fd);
     void shutdown();
     bool isInitialized() const { return uinputFd_ >= 0; }
     int fd() const { return uinputFd_; }
@@ -42,6 +43,10 @@ public:
 
     // Forward a raw physical key event (press=1, release=0, repeat=2)
     void forwardKeyEvent(uint16_t code, int32_t value);
+
+    // Emit an atomic key tap (press + release) with optional micro-hold pacing so fast
+    // X11/XWayland/Wayland apps never drop or coalesce zero-duration taps ahead of Backspace.
+    void forwardTapEvent(uint16_t code, int tapHoldUs = 0);
 
     // Emit an atomic diff (Backspaces + replacement text) using the specified OutputMethod
     void emitDiff(
@@ -103,6 +108,7 @@ private:
     static void defaultSetClipboard(const std::string& text);
 
     int uinputFd_ = -1;
+    bool isCustomFd_ = false;
     mutable std::mutex mutex_;
     XkbOverlay xkbOverlay_;
     std::bitset<KEY_MAX + 1> activeKeys_;

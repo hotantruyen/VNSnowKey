@@ -62,6 +62,7 @@ build_one() {
         "${image}" bash -lc '
             set -euo pipefail
             export DEBIAN_FRONTEND=noninteractive
+            sed -i "s|URIs: http://deb.debian.org/debian$|URIs: http://cloudflaremirrors.com/debian|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends \
                 build-essential \

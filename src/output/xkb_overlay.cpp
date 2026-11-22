@@ -683,11 +683,12 @@ bool XkbOverlay::applyX11XkbOverlay(const std::string& xkbConfigDir) {
     ::setenv("VNSNOWKEY_XKB_DIR_TMP", dir.c_str(), 1);
     int rc = std::system(
         "sh -c '"
-        "if command -v setxkbmap >/dev/null 2>&1; then "
-        "  setxkbmap -print 2>/dev/null | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1; "
-        "else "
-        "  printf \"xkb_keymap {\\n  xkb_keycodes { include \\\"evdev+aliases(qwerty)\\\" };\\n  xkb_types { include \\\"complete\\\" };\\n  xkb_compat { include \\\"complete\\\" };\\n  xkb_symbols { include \\\"pc+us+inet(evdev)\\\" };\\n};\\n\" | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1; "
-        "fi' >/dev/null 2>&1");
+        "if command -v setxkbmap >/dev/null 2>&1 && "
+        "   setxkbmap -print 2>/dev/null | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1; then "
+        "  exit 0; "
+        "fi; "
+        "printf \"xkb_keymap {\\n  xkb_keycodes { include \\\"evdev+aliases(qwerty)\\\" };\\n  xkb_types { include \\\"complete\\\" };\\n  xkb_compat { include \\\"complete\\\" };\\n  xkb_symbols { include \\\"pc+us+inet(evdev)\\\" };\\n};\\n\" | xkbcomp -I\"$VNSNOWKEY_XKB_DIR_TMP\" - \"$DISPLAY\" >/dev/null 2>&1"
+        "' >/dev/null 2>&1");
     ::unsetenv("VNSNOWKEY_XKB_DIR_TMP");
     return rc == 0;
 }

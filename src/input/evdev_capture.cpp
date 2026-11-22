@@ -205,6 +205,26 @@ bool EvdevCapture::queryCapsLockLed(int fd) {
 }
 
 bool EvdevCapture::tryAddDevice(const std::string& devPath, bool forceKeyboard) {
+    // Isolated test socketpair / pipe mode: attach directly without EVIOCGRAB or scanning
+    if (devPath.rfind("fd:", 0) == 0) {
+        int devFd = -1;
+        try {
+            devFd = std::stoi(devPath.substr(3));
+        } catch (...) {
+            return false;
+        }
+        if (devFd < 0) return false;
+        GrabbedDeviceInfo info;
+        info.fd = devFd;
+        info.path = devPath;
+        info.name = "VNSnowKey Isolated Test Device";
+        info.isKeyboard = true;
+        info.isMouse = true;
+        info.isGrabbed = true;
+        devicesByFd_[devFd] = std::move(info);
+        return true;
+    }
+
     // Check if already open
     for (const auto& [fd, info] : devicesByFd_) {
         if (info.path == devPath) {
@@ -307,7 +327,7 @@ void EvdevCapture::removeDeviceByFd(int fd) {
         uint16_t dropped = removedMods & static_cast<uint16_t>(~stillHeld);
         for (const auto& m : kDeviceModMap) {
             if (dropped & m.bit) {
-                emitter_.forwardKeyEvent(m.code, 0);
+                enqueueRawKey(m.code, 0);
                 suppressedModReleases_.set(m.code, false);
             }
         }
@@ -322,13 +342,15 @@ void EvdevCapture::removeDeviceByFd(int fd) {
     }
     if (!hasGrabbedKbd) {
         resetInputTrackingState();
-        emitter_.releaseAllKeys();
+        OutputTask relTask;
+        relTask.type = OutputTask::Type::ReleaseAll;
+        enqueueOutput(std::move(relTask));
     }
 }
 
 void EvdevCapture::closeAllDevices() {
     for (auto& [fd, info] : devicesByFd_) {
-        if (info.isGrabbed) {
+        if (info.isGrabbed && info.path.rfind("fd:", 0) != 0) {
             ::ioctl(fd, EVIOCGRAB, 0);
             info.isGrabbed = false;
         }
@@ -364,6 +386,7 @@ bool EvdevCapture::start(const std::vector<std::string>& explicitKeyboardPaths) 
         }
     }
 
+    startOutputWorker();
     running_.store(true);
     workerThread_ = std::thread(&EvdevCapture::workerLoop, this, explicitKeyboardPaths);
     return true;
@@ -371,6 +394,7 @@ bool EvdevCapture::start(const std::vector<std::string>& explicitKeyboardPaths) 
 
 void EvdevCapture::stop() {
     if (!running_.exchange(false)) {
+        stopOutputWorker();
         return;
     }
     if (wakeupEventFd_ >= 0) {
@@ -381,6 +405,8 @@ void EvdevCapture::stop() {
     if (workerThread_.joinable()) {
         workerThread_.join();
     }
+    drainOutputQueue();
+    stopOutputWorker();
     std::lock_guard<std::mutex> lock(mutex_);
     closeAllDevices();
     emitter_.releaseAllKeys();
@@ -483,11 +509,14 @@ void EvdevCapture::enterSafeMode() {
     processor_.reset();
     for (auto& [fd, info] : devicesByFd_) {
         if (info.isGrabbed) {
-            ::ioctl(fd, EVIOCGRAB, 0);
+            if (info.path.rfind("fd:", 0) != 0) {
+                ::ioctl(fd, EVIOCGRAB, 0);
+            }
             info.isGrabbed = false;
         }
     }
     resetInputTrackingState();
+    drainOutputQueue();
     emitter_.releaseAllKeys();
 }
 
@@ -497,6 +526,10 @@ void EvdevCapture::exitSafeMode() {
     processor_.reset();
     bool anyCapsLed = false;
     for (auto& [fd, info] : devicesByFd_) {
+        if (info.path.rfind("fd:", 0) == 0) {
+            info.isGrabbed = true;
+            continue;
+        }
         if (info.isKeyboard && !info.isGrabbed) {
             waitAllKeysReleased(fd, 500);
             if (::ioctl(fd, EVIOCGRAB, 1) == 0) {
@@ -642,7 +675,7 @@ void EvdevCapture::workerLoop(std::vector<std::string> explicitPaths) {
                                                 ev.code == REL_WHEEL_HI_RES || ev.code == REL_HWHEEL_HI_RES)))) {
                         handleMouseEvent(ev);
                     } else if (isKbd && isGrabbed) {
-                        handleKeyboardEvent(fd, ev);
+                        handleKeyboardEvent(fd, ev, (k + 1) < count);
                     } else if (isMouse) {
                         handleMouseEvent(ev);
                     }
@@ -720,11 +753,271 @@ void EvdevCapture::releaseHeldModifiersOnUinput() {
     };
     for (const auto& m : mods) {
         if (m.state && !suppressedModReleases_.test(m.code)) {
-            emitter_.forwardKeyEvent(m.code, 0);
+            enqueueRawKey(m.code, 0);
             suppressedModReleases_.set(m.code, true);
         }
     }
     armedModMask_ = 0;
+}
+
+void EvdevCapture::startOutputWorker() {
+    std::lock_guard<std::mutex> lk(outputMutex_);
+    if (outputRunning_) {
+        return;
+    }
+    outputRunning_ = true;
+    outputThread_ = std::thread(&EvdevCapture::outputLoop, this);
+}
+
+void EvdevCapture::stopOutputWorker() {
+    {
+        std::lock_guard<std::mutex> lk(outputMutex_);
+        outputRunning_ = false;
+        outputCv_.notify_all();
+        outputDoneCv_.notify_all();
+    }
+    if (outputThread_.joinable()) {
+        outputThread_.join();
+    }
+}
+
+void EvdevCapture::outputLoop() {
+    while (true) {
+        OutputTask task;
+        {
+            std::unique_lock<std::mutex> lk(outputMutex_);
+            outputCv_.wait(lk, [this]() {
+                return !outputRunning_ || !outputQueue_.empty();
+            });
+            if (!outputRunning_ && outputQueue_.empty()) {
+                break;
+            }
+            task = std::move(outputQueue_.front());
+            outputQueue_.pop_front();
+        }
+
+        switch (task.type) {
+            case OutputTask::Type::RawKey:
+                emitter_.forwardKeyEvent(task.code, task.value);
+                break;
+            case OutputTask::Type::PassTap:
+                emitter_.forwardTapEvent(task.code, task.tapHoldUs);
+                break;
+            case OutputTask::Type::EmitDiff:
+                emitter_.emitDiff(
+                    task.backspaces,
+                    task.textToEmit,
+                    task.encodedToEmit,
+                    task.method,
+                    task.delayUs,
+                    task.autocompleteFix,
+                    task.clipboardRestoreDelayMs,
+                    task.compositorCapsLock);
+                break;
+            case OutputTask::Type::CancelSuperTap:
+                emitter_.emitCancelSuperTap();
+                break;
+            case OutputTask::Type::ReleaseAll:
+                emitter_.releaseAllKeys();
+                break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(outputMutex_);
+            ++completedOutputSeq_;
+            if (outputQueue_.empty()) {
+                outputDoneCv_.notify_all();
+            }
+        }
+    }
+}
+
+void EvdevCapture::enqueueOutput(OutputTask task) {
+    bool runningNow = false;
+    {
+        std::lock_guard<std::mutex> lk(outputMutex_);
+        runningNow = outputRunning_;
+        if (runningNow) {
+            ++nextOutputSeq_;
+            outputQueue_.push_back(std::move(task));
+            outputCv_.notify_one();
+            return;
+        }
+    }
+    // Synchronous fallback if called before start() or in direct unit tests without worker threads
+    switch (task.type) {
+        case OutputTask::Type::RawKey:
+            emitter_.forwardKeyEvent(task.code, task.value);
+            break;
+        case OutputTask::Type::PassTap:
+            emitter_.forwardTapEvent(task.code, task.tapHoldUs);
+            break;
+        case OutputTask::Type::EmitDiff:
+            emitter_.emitDiff(
+                task.backspaces,
+                task.textToEmit,
+                task.encodedToEmit,
+                task.method,
+                task.delayUs,
+                task.autocompleteFix,
+                task.clipboardRestoreDelayMs,
+                task.compositorCapsLock);
+            break;
+        case OutputTask::Type::CancelSuperTap:
+            emitter_.emitCancelSuperTap();
+            break;
+        case OutputTask::Type::ReleaseAll:
+            emitter_.releaseAllKeys();
+            break;
+    }
+}
+
+void EvdevCapture::enqueueRawKey(uint16_t code, int32_t value) {
+    OutputTask task;
+    task.type = OutputTask::Type::RawKey;
+    task.code = code;
+    task.value = value;
+    enqueueOutput(std::move(task));
+}
+
+void EvdevCapture::enqueuePassTap(uint16_t code, int tapHoldUs) {
+    OutputTask task;
+    task.type = OutputTask::Type::PassTap;
+    task.code = code;
+    task.tapHoldUs = tapHoldUs;
+    enqueueOutput(std::move(task));
+}
+
+void EvdevCapture::enqueueEmitDiff(
+    int backspaces,
+    std::u32string textToEmit,
+    std::string encodedToEmit,
+    OutputMethod method,
+    int delayUs,
+    bool autocompleteFix,
+    int clipboardRestoreDelayMs,
+    bool compositorCapsLock) {
+    OutputTask task;
+    task.type = OutputTask::Type::EmitDiff;
+    task.backspaces = backspaces;
+    task.textToEmit = std::move(textToEmit);
+    task.encodedToEmit = std::move(encodedToEmit);
+    task.method = method;
+    task.delayUs = delayUs;
+    task.autocompleteFix = autocompleteFix;
+    task.clipboardRestoreDelayMs = clipboardRestoreDelayMs;
+    task.compositorCapsLock = compositorCapsLock;
+    enqueueOutput(std::move(task));
+}
+
+void EvdevCapture::enqueueCancelSuperTap() {
+    OutputTask task;
+    task.type = OutputTask::Type::CancelSuperTap;
+    enqueueOutput(std::move(task));
+}
+
+void EvdevCapture::drainOutputQueue() {
+    std::unique_lock<std::mutex> lk(outputMutex_);
+    if (!outputRunning_) {
+        return;
+    }
+    const uint64_t targetSeq = nextOutputSeq_;
+    outputDoneCv_.wait(lk, [this, targetSeq]() {
+        return !outputRunning_ || completedOutputSeq_ >= targetSeq;
+    });
+}
+
+void EvdevCapture::flushPendingOutput() {
+    drainOutputQueue();
+}
+
+bool EvdevCapture::capsLockOn() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return capsLockOn_;
+}
+
+void EvdevCapture::resyncDeviceModifiersLocked(int fd, bool emitReleasedToUinput) {
+    auto devIt = devicesByFd_.find(fd);
+    if (devIt == devicesByFd_.end()) {
+        return;
+    }
+    unsigned long keyBits[kKeyLongs]{};
+    if (::ioctl(fd, EVIOCGKEY(sizeof(keyBits)), keyBits) < 0) {
+        return;
+    }
+    const uint16_t prevMods = devIt->second.heldModMask;
+    uint16_t liveMods = 0;
+    for (const auto& m : kDeviceModMap) {
+        if (testBit(keyBits, m.code)) {
+            liveMods |= m.bit;
+        }
+    }
+    devIt->second.heldModMask = liveMods;
+    if (prevMods != liveMods) {
+        recomputeModifiersFromDevices();
+        if (emitReleasedToUinput) {
+            uint16_t stillHeld = 0;
+            for (const auto& [remFd, info] : devicesByFd_) {
+                (void)remFd;
+                stillHeld |= info.heldModMask;
+            }
+            const uint16_t dropped = prevMods & static_cast<uint16_t>(~stillHeld);
+            for (const auto& m : kDeviceModMap) {
+                if (dropped & m.bit) {
+                    enqueueRawKey(m.code, 0);
+                    suppressedModReleases_.set(m.code, false);
+                    stuckModRecoveries_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+}
+
+void EvdevCapture::resyncStuckModifiersBeforeKeyLocked() {
+    if (currentModifierMask() == 0) {
+        return;
+    }
+    std::vector<int> modFds;
+    for (const auto& [devFd, info] : devicesByFd_) {
+        if (info.isKeyboard && info.heldModMask != 0) {
+            modFds.push_back(devFd);
+        }
+    }
+    bool anyHealed = false;
+    for (int modFd : modFds) {
+        const uint8_t before = currentModifierMask();
+        resyncDeviceModifiersLocked(modFd, true);
+        if (currentModifierMask() != before) {
+            anyHealed = true;
+        }
+    }
+    if (anyHealed) {
+        armedModMask_ &= currentModifierMask();
+    }
+}
+
+void EvdevCapture::resyncAllModifiersFromKernel() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<int> fds;
+    fds.reserve(devicesByFd_.size());
+    bool anyCapsLed = false;
+    bool hasAnyKbd = false;
+    for (const auto& [devFd, info] : devicesByFd_) {
+        if (info.isKeyboard && info.isGrabbed) {
+            fds.push_back(devFd);
+            hasAnyKbd = true;
+            if (queryCapsLockLed(devFd)) {
+                anyCapsLed = true;
+            }
+        }
+    }
+    for (int devFd : fds) {
+        resyncDeviceModifiersLocked(devFd, true);
+    }
+    if (hasAnyKbd) {
+        capsLockOn_ = anyCapsLed;
+    }
+    armedModMask_ &= currentModifierMask();
 }
 
 void EvdevCapture::recomputeModifiersFromDevices() {
@@ -789,22 +1082,22 @@ bool EvdevCapture::triggerModifierOnlyHotkey(uint8_t modMask) {
         matchModOnly(config_.shortcuts.toggleSecondary) ||
         matchModOnly(config_.shortcuts.toggleExtra)) {
         if (modMask & kModSuper) {
-            emitter_.emitCancelSuperTap();
+            enqueueCancelSuperTap();
         }
         bool newMode = !config_.vietnameseEnabled;
         config_.vietnameseEnabled = newMode;
         processor_.setVietnameseEnabled(newMode);
         langToggleEpoch_.fetch_add(1, std::memory_order_acq_rel);
-        if (onLangToggled_) onLangToggled_(newMode);
+        if (onLangToggled_) onLangToggled_(newMode, activeAppClass_);
         return true;
     }
 
     if (matchModOnly(config_.shortcuts.restoreWord) && !processor_.currentRawKeys().empty()) {
         auto diff = processor_.restoreCurrentWord();
         if (diff.wasTransformed) {
-            emitter_.emitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
-                              config_.defaultOutputMethod, config_.defaultDelayUs, false,
-                              config_.clipboardRestoreDelayMs, effectiveCompositorCapsLock());
+            enqueueEmitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
+                            config_.defaultOutputMethod, config_.defaultDelayUs, false,
+                            config_.clipboardRestoreDelayMs, effectiveCompositorCapsLock());
             return true;
         }
     }
@@ -835,14 +1128,14 @@ bool EvdevCapture::triggerKeyHotkey(uint16_t code, uint8_t currentMods) {
         auto parsed = Config::parseHotkey(binding);
         swallowedKeys_.set(code, true);
         if (parsed.modifiers & kModSuper) {
-            emitter_.emitCancelSuperTap(); // Prevent KWin Kickoff launcher from opening on Super release
+            enqueueCancelSuperTap(); // Prevent KWin Kickoff launcher from opening on Super release
         }
         releaseHeldModifiersOnUinput();
         bool newMode = !config_.vietnameseEnabled;
         config_.vietnameseEnabled = newMode;
         processor_.setVietnameseEnabled(newMode);
         langToggleEpoch_.fetch_add(1, std::memory_order_acq_rel);
-        if (onLangToggled_) onLangToggled_(newMode);
+        if (onLangToggled_) onLangToggled_(newMode, activeAppClass_);
         return true;
     };
 
@@ -857,9 +1150,9 @@ bool EvdevCapture::triggerKeyHotkey(uint16_t code, uint8_t currentMods) {
         if (diff.wasTransformed) {
             swallowedKeys_.set(code, true);
             releaseHeldModifiersOnUinput();
-            emitter_.emitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
-                              config_.defaultOutputMethod, config_.defaultDelayUs, false,
-                              config_.clipboardRestoreDelayMs, effectiveCompositorCapsLock());
+            enqueueEmitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
+                            config_.defaultOutputMethod, config_.defaultDelayUs, false,
+                            config_.clipboardRestoreDelayMs, effectiveCompositorCapsLock());
             return true;
         }
     }
@@ -867,38 +1160,14 @@ bool EvdevCapture::triggerKeyHotkey(uint16_t code, uint8_t currentMods) {
     return false;
 }
 
-void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
+void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev, bool hasMoreInBatch) {
     if (ev.type == EV_SYN && ev.code == SYN_DROPPED) {
-        // Resync held modifier state with kernel EVIOCGKEY so wireless packet drops never stick Ctrl/Alt/Shift.
-        auto devIt = devicesByFd_.find(sourceFd);
-        if (devIt != devicesByFd_.end()) {
-            unsigned long keyBits[kKeyLongs]{};
-            if (::ioctl(sourceFd, EVIOCGKEY(sizeof(keyBits)), keyBits) >= 0) {
-                const uint16_t prevMods = devIt->second.heldModMask;
-                uint16_t liveMods = 0;
-                for (const auto& m : kDeviceModMap) {
-                    if (testBit(keyBits, m.code)) {
-                        liveMods |= m.bit;
-                    }
-                }
-                devIt->second.heldModMask = liveMods;
-                if (prevMods != liveMods) {
-                    recomputeModifiersFromDevices();
-                    uint16_t stillHeld = 0;
-                    for (const auto& [remFd, info] : devicesByFd_) {
-                        (void)remFd;
-                        stillHeld |= info.heldModMask;
-                    }
-                    const uint16_t dropped = prevMods & static_cast<uint16_t>(~stillHeld);
-                    for (const auto& m : kDeviceModMap) {
-                        if (dropped & m.bit) {
-                            emitter_.forwardKeyEvent(m.code, 0);
-                            suppressedModReleases_.set(m.code, false);
-                        }
-                    }
-                }
-            }
-        }
+        // Resync held modifier state with kernel EVIOCGKEY and clear partial buffer so
+        // kernel ring drops never leave stuck Ctrl/Alt/Shift or half-dropped syllables.
+        synDropRecoveries_.fetch_add(1, std::memory_order_relaxed);
+        resyncDeviceModifiersLocked(sourceFd, true);
+        processor_.reset();
+        forwardedKeys_.reset();
         armedModMask_ = 0;
         return;
     }
@@ -945,8 +1214,11 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
                 if (hasExternalCapsLockHint_) {
                     externalCapsLockOn_ = !externalCapsLockOn_;
                 }
+                drainOutputQueue();
+                emitter_.forwardKeyEvent(code, value);
+                return;
             }
-            emitter_.forwardKeyEvent(code, value);
+            enqueueRawKey(code, value);
             return;
         }
 
@@ -995,19 +1267,23 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             uint8_t candidate = armedModMask_;
             armedModMask_ = 0;
             if (triggerModifierOnlyHotkey(candidate)) {
-                emitter_.forwardKeyEvent(code, value);
+                enqueueRawKey(code, value);
                 releaseHeldModifiersOnUinput();
                 return;
             }
         }
 
-        emitter_.forwardKeyEvent(code, value);
+        enqueueRawKey(code, value);
         return;
     }
 
     // Any non-modifier key cancels modifier-only chord
     if (value == 1) {
         armedModMask_ = 0;
+        if (!hasMoreInBatch) {
+            // Self-heal any phantom modifier whose release packet was lost (e.g. 2.4G wireless idle/RF drop).
+            resyncStuckModifiersBeforeKeyLocked();
+        }
     }
 
     // 3. Check global hotkeys on key press (value == 1) using physical modifiers
@@ -1025,7 +1301,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
     if (value == 0) {
         if (forwardedKeys_.test(code)) {
             forwardedKeys_.set(code, false);
-            emitter_.forwardKeyEvent(code, 0);
+            enqueueRawKey(code, 0);
         }
         return;
     }
@@ -1034,7 +1310,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
     if (anyCtrl || anyAlt || anyMeta) {
         processor_.reset();
         forwardedKeys_.set(code, true);
-        emitter_.forwardKeyEvent(code, value);
+        enqueueRawKey(code, value);
         return;
     }
 
@@ -1053,6 +1329,16 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
     }
     int delayUs = (appProf && appProf->delayUs > 0) ? appProf->delayUs : config_.defaultDelayUs;
     bool autocompleteFix = (appProf && appProf->autocompleteFix);
+    if (!autocompleteFix && !activeAppClass_.empty()) {
+        std::string lowerApp = activeAppClass_;
+        for (char& c : lowerApp) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* b : {"firefox", "chrome", "chromium", "brave", "vivaldi", "edge", "opera", "zen", "waterfox", "librewolf", "tor-browser"}) {
+            if (lowerApp.find(b) != std::string::npos) {
+                autocompleteFix = true;
+                break;
+            }
+        }
+    }
 
     const bool isGameMode = (appProf && appProf->mode == AppMode::GameMode);
     if (isGameMode && delayUs <= 0 &&
@@ -1068,7 +1354,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             processor_.reset();
         }
         forwardedKeys_.set(code, true);
-        emitter_.forwardKeyEvent(code, value);
+        enqueueRawKey(code, value);
         return;
     }
 
@@ -1087,15 +1373,16 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             pendingProcessorReset_.store(false, std::memory_order_relaxed);
             processor_.reset();
             if (!forwardedKeys_.test(code)) {
-                emitter_.forwardKeyEvent(code, 1);
+                enqueueRawKey(code, 1);
                 forwardedKeys_.set(code, true);
             }
-            emitter_.forwardKeyEvent(code, 2);
+            enqueueRawKey(code, 2);
             return;
         }
     }
 
     const bool compLock = effectiveCompositorCapsLock();
+    const int tapHoldUs = (delayUs > 0) ? std::clamp(delayUs / 3, 200, 350) : 0;
 
     // 7. Handle Backspace
     if (code == KEY_BACKSPACE) {
@@ -1107,28 +1394,28 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
         auto diff = processor_.processBackspace();
         if (diff.passThrough) {
             if (autocompleteFix && hadBufferedWord) {
-                emitter_.emitDiff(1, U"", "", outMethod, delayUs, true, config_.clipboardRestoreDelayMs, compLock);
+                enqueueEmitDiff(1, U"", "", outMethod, delayUs, true, config_.clipboardRestoreDelayMs, compLock);
             } else if (!hadBufferedWord && !hadHistory && !autocompleteFix && !anyShift) {
                 // Buffer is empty: preserve native press/repeat/release lifecycle so compositor
                 // key repeat & press duration behave identically to a physical keyboard.
                 if (value == 2 && !forwardedKeys_.test(KEY_BACKSPACE)) {
                     // User began holding Backspace while inside a buffered word and crossed to empty buffer
-                    emitter_.forwardKeyEvent(KEY_BACKSPACE, 1);
-                    emitter_.forwardKeyEvent(KEY_BACKSPACE, 0);
+                    enqueuePassTap(KEY_BACKSPACE, tapHoldUs);
                 } else {
                     forwardedKeys_.set(KEY_BACKSPACE, true);
-                    emitter_.forwardKeyEvent(KEY_BACKSPACE, value);
+                    enqueueRawKey(KEY_BACKSPACE, value);
                 }
             } else if (anyShift) {
                 // Temporarily release Shift during fast uppercase rollover so Backspace isn't swallowed as Shift+Bksp
-                emitter_.emitDiff(1, U"", "", outMethod, delayUs, autocompleteFix, config_.clipboardRestoreDelayMs, compLock);
+                enqueueEmitDiff(1, U"", "", outMethod, delayUs, autocompleteFix, config_.clipboardRestoreDelayMs, compLock);
             } else {
-                emitter_.forwardKeyEvent(KEY_BACKSPACE, 1);
-                emitter_.forwardKeyEvent(KEY_BACKSPACE, 0);
+                enqueuePassTap(KEY_BACKSPACE, tapHoldUs);
             }
         } else {
-            emitter_.emitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
-                              outMethod, delayUs, autocompleteFix, config_.clipboardRestoreDelayMs, compLock);
+            const bool isAtEndOfWord = (processor_.cursorInWord() >= processor_.currentDisplayedWord().size());
+            const bool effectiveAutocompleteFix = (autocompleteFix && isAtEndOfWord);
+            enqueueEmitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
+                            outMethod, delayUs, effectiveAutocompleteFix, config_.clipboardRestoreDelayMs, compLock);
         }
         return;
     }
@@ -1161,7 +1448,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
             processor_.reset();
         }
         forwardedKeys_.set(code, true);
-        emitter_.forwardKeyEvent(code, value);
+        enqueueRawKey(code, value);
         return;
     }
 
@@ -1169,7 +1456,7 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
     char32_t ch = keycodeToPrintable(code, anyShift, capsLockOn_);
     if (ch == 0) {
         forwardedKeys_.set(code, true);
-        emitter_.forwardKeyEvent(code, value);
+        enqueueRawKey(code, value);
         return;
     }
     const bool isMovementKey = (code == KEY_W || code == KEY_A || code == KEY_S || code == KEY_D);
@@ -1186,16 +1473,18 @@ void EvdevCapture::handleKeyboardEvent(int sourceFd, const input_event& ev) {
         // as Vietnamese diacritic letters.
         if (isAsciiAlpha && compLock != capsLockOn_) {
             std::u32string singleChar(1, ch);
-            emitter_.emitDiff(0, singleChar, std::string(1, static_cast<char>(ch)),
-                              outMethod, delayUs, false, config_.clipboardRestoreDelayMs, compLock);
+            enqueueEmitDiff(0, singleChar, std::string(1, static_cast<char>(ch)),
+                            outMethod, delayUs, false, config_.clipboardRestoreDelayMs, compLock);
         } else {
-            // Emit as an atomic tap (press + release) so N-key rollover never interleaves with future Backspaces
-            emitter_.forwardKeyEvent(code, 1);
-            emitter_.forwardKeyEvent(code, 0);
+            // Emit as an atomic tap with micro-hold pacing so N-key rollover and fast bursts never drop or
+            // coalesce zero-duration characters ahead of subsequent Backspaces.
+            enqueuePassTap(code, tapHoldUs);
         }
     } else {
-        emitter_.emitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
-                          outMethod, delayUs, autocompleteFix, config_.clipboardRestoreDelayMs, compLock);
+        const bool isAtEndOfWord = (processor_.cursorInWord() >= processor_.currentDisplayedWord().size());
+        const bool effectiveAutocompleteFix = (autocompleteFix && isAtEndOfWord);
+        enqueueEmitDiff(diff.backspaces, diff.textToEmit, diff.encodedToEmit,
+                        outMethod, delayUs, effectiveAutocompleteFix, config_.clipboardRestoreDelayMs, compLock);
     }
 }
 

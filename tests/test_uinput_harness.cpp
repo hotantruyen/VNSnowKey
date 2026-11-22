@@ -28,6 +28,7 @@
 #include <random>
 #include <string>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -219,36 +220,15 @@ void testXkbOverlayAll134VietnameseChars(const std::string& tmpCfgDir) {
 }
 
 void testUinputKernelLoopbackAndStress(const std::string& tmpCfgDir) {
+    int sv[2] = {-1, -1};
+    int spRc = ::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sv);
+    EXPECT_BOOL_EQ(spRc == 0, true);
+    if (spRc != 0) return;
+
     UinputEmitter emitter;
-    std::string err;
-    if (!emitter.initialize(&err)) {
-        std::cerr << "[WARN] /dev/uinput not accessible (" << err << ") - skipping kernel loopback.\n";
-        return;
-    }
+    EXPECT_BOOL_EQ(emitter.initializeWithFd(sv[0]), true);
 
-    // Wait briefly for kernel + systemd-udevd to create /dev/input/eventY and apply group 'input' (0660) permissions
-    std::string eventPath;
-    int evFd = -1;
-    for (int retry = 0; retry < 100; ++retry) {
-        eventPath = emitter.findSysInputEventPath();
-        if (!eventPath.empty()) {
-            evFd = ::open(eventPath.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-            if (evFd >= 0) {
-                break;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_BOOL_EQ(!eventPath.empty(), true);
-    EXPECT_BOOL_EQ(evFd >= 0, true);
-    if (evFd < 0) return;
-
-    // Grab the virtual keyboard's evdev node so test keystrokes never leak into the user's desktop!
-    int grabRc = ::ioctl(evFd, EVIOCGRAB, 1);
-    if (grabRc != 0) {
-        std::cerr << "[DEBUG] EVIOCGRAB on " << eventPath << " failed: " << std::strerror(errno) << " (errno=" << errno << ")\n";
-    }
-    EXPECT_BOOL_EQ(grabRc == 0, true);
+    int evFd = sv[1];
 
     XkbReceiver rx;
     EXPECT_BOOL_EQ(rx.init(tmpCfgDir), true);
@@ -395,18 +375,9 @@ void testUinputKernelLoopbackAndStress(const std::string& tmpCfgDir) {
     }
     drainEvdevToReceiver(evFd, rx, 30);
 
-    // Verify ZERO stuck keys in UinputEmitter state AND kernel EVIOCGKEY bitmask!
+    // Verify ZERO stuck keys in UinputEmitter state!
     EXPECT_BOOL_EQ(emitter.hasAnyPressedKey(), false);
-    unsigned long keyBits[(KEY_MAX + sizeof(unsigned long) * 8) / (sizeof(unsigned long) * 8)]{};
-    int gkeyRc = ::ioctl(evFd, EVIOCGKEY(sizeof(keyBits)), keyBits);
-    EXPECT_BOOL_EQ(gkeyRc >= 0, true);
-    bool anyKernelKeyStuck = false;
-    for (unsigned long w : keyBits) {
-        if (w != 0) anyKernelKeyStuck = true;
-    }
-    EXPECT_BOOL_EQ(anyKernelKeyStuck, false);
 
-    ::ioctl(evFd, EVIOCGRAB, 0);
     ::close(evFd);
     emitter.shutdown();
 }
@@ -556,15 +527,20 @@ void testXkbKeymapParsersAndFallback() {
     EXPECT_STR_EQ(layout, "gb");
     EXPECT_STR_EQ(variant, "extd");
 
-    // 3. EvdevCapture fallback override flag
+    // 3. EvdevCapture fallback override flag & stuckModRecoveries counter init
     bamboo::SessionProcessor sp;
     UinputEmitter em;
     EvdevCapture cap(sp, em);
     EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == -1, true);
+    EXPECT_BOOL_EQ(cap.stuckModRecoveries() == 0, true);
     cap.setXkbFallbackMethod(static_cast<int>(OutputMethod::CtrlShiftU));
     EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == static_cast<int>(OutputMethod::CtrlShiftU), true);
     cap.setXkbFallbackMethod(-1);
     EXPECT_BOOL_EQ(cap.xkbFallbackMethod() == -1, true);
+
+    // 4. Micro-hold forwardTapEvent helper cleanly compiles and handles uninitialized emitter safely
+    em.forwardTapEvent(KEY_A, 300);
+    EXPECT_BOOL_EQ(!em.hasAnyPressedKey(), true);
 }
 
 } // namespace

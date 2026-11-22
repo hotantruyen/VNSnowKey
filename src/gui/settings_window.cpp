@@ -392,12 +392,7 @@ SettingsWindow::SettingsWindow(QWidget* parent)
     setMinimumSize(680, 460);
     setWindowIcon(TrayController::buildAdaptiveMonochromeIcon(true));
 
-    dbus_ = new QDBusInterface(
-        QStringLiteral("org.vnsnowkey.Daemon"),
-        QStringLiteral("/org/vnsnowkey/Daemon"),
-        QStringLiteral("org.vnsnowkey.Daemon"),
-        QDBusConnection::sessionBus(),
-        this);
+    ensureDbus();
 
     setupUi();
     loadConfigIntoUi();
@@ -1054,7 +1049,7 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addWidget(diagnosticsOutputEdit_, 1);
 
     auto* botRow = new QHBoxLayout();
-    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.4</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
+    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.6</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
     auto* refreshDiagBtn = new QPushButton(QStringLiteral("Kiểm tra lại"), page);
     connect(refreshDiagBtn, &QPushButton::clicked, this, &SettingsWindow::onRefreshDiagnostics);
     botRow->addWidget(verLbl, 1);
@@ -1292,8 +1287,8 @@ void SettingsWindow::onApplyAndHotReload() {
     lastAutostartState_ = config_.autostart;
     hasAppliedOnce_ = true;
 
-    if (dbus_ && dbus_->isValid()) {
-        dbus_->call(QStringLiteral("ReloadConfig"));
+    if (auto* iface = ensureDbus()) {
+        iface->call(QStringLiteral("ReloadConfig"));
     }
 
     baselineConfig_ = draft;
@@ -1390,11 +1385,27 @@ void SettingsWindow::onConvertTextSample() {
     convResultEdit_->setPlainText(QString::fromStdString(out));
 }
 
+QDBusInterface* SettingsWindow::ensureDbus() {
+    if (!dbus_ || !dbus_->isValid()) {
+        if (dbus_) {
+            dbus_->deleteLater();
+            dbus_ = nullptr;
+        }
+        dbus_ = new QDBusInterface(
+            QStringLiteral("org.vnsnowkey.Daemon"),
+            QStringLiteral("/org/vnsnowkey/Daemon"),
+            QStringLiteral("org.vnsnowkey.Daemon"),
+            QDBusConnection::sessionBus(),
+            this);
+    }
+    return (dbus_ && dbus_->isValid()) ? dbus_ : nullptr;
+}
+
 void SettingsWindow::onConvertClipboardNow() {
     const QString fromCs = convFromCharsetCombo_->currentData().toString();
     const QString toCs = convToCharsetCombo_->currentData().toString();
-    if (dbus_ && dbus_->isValid()) {
-        dbus_->call(QStringLiteral("ConvertClipboard"), fromCs, toCs, toCs == QStringLiteral("ASCII"));
+    if (auto* iface = ensureDbus()) {
+        iface->call(QStringLiteral("ConvertClipboard"), fromCs, toCs, toCs == QStringLiteral("ASCII"));
     }
     if (QClipboard* clip = QApplication::clipboard()) {
         const std::string src = clip->text().toStdString();
@@ -1433,19 +1444,20 @@ void SettingsWindow::onRestoreConfig() {
 }
 
 void SettingsWindow::onToggleDaemonModeClicked() {
-    if (dbus_ && dbus_->isValid()) {
-        dbus_->call(QStringLiteral("Toggle"));
+    if (auto* iface = ensureDbus()) {
+        iface->call(QStringLiteral("Toggle"));
         onRefreshDiagnostics();
     }
 }
 
 void SettingsWindow::onPanicOrResumeClicked() {
-    if (!dbus_ || !dbus_->isValid()) return;
-    QDBusReply<QString> reply = dbus_->call(QStringLiteral("GetStatus"));
+    auto* iface = ensureDbus();
+    if (!iface) return;
+    QDBusReply<QString> reply = iface->call(QStringLiteral("GetStatus"));
     if (reply.isValid() && reply.value().contains(QStringLiteral("safe_mode=true"))) {
-        dbus_->call(QStringLiteral("ResumeFromPanic"));
+        iface->call(QStringLiteral("ResumeFromPanic"));
     } else {
-        dbus_->call(QStringLiteral("PanicStop"));
+        iface->call(QStringLiteral("PanicStop"));
     }
     onRefreshDiagnostics();
 }
@@ -1502,8 +1514,8 @@ void SettingsWindow::onRefreshDiagnostics() {
     }
 
     // 4. Check Daemon status over D-Bus
-    if (dbus_ && dbus_->isValid()) {
-        QDBusReply<QString> statusReply = dbus_->call(QStringLiteral("GetStatus"));
+    if (auto* iface = ensureDbus()) {
+        QDBusReply<QString> statusReply = iface->call(QStringLiteral("GetStatus"));
         if (statusReply.isValid()) {
             ts << "\n=== TRẠNG THÁI DAEMON TRỰC TIẾP (org.vnsnowkey.Daemon) ===\n"
                << statusReply.value();
@@ -1534,6 +1546,9 @@ void SettingsWindow::onRefreshDiagnostics() {
             ts << "\n[CHÚ Ý] Daemon vnsnowkeyd hiện chưa chạy. Khởi động bằng:\n"
                << "        systemctl --user start vnsnowkeyd.service\n";
         }
+    } else {
+        ts << "\n[CHÚ Ý] Daemon vnsnowkeyd hiện chưa chạy. Khởi động bằng:\n"
+           << "        systemctl --user start vnsnowkeyd.service\n";
     }
 
     if (diagnosticsOutputEdit_) {

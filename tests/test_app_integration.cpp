@@ -83,6 +83,19 @@ public:
         }
     }
 
+    void sendDelete() {
+        if (lineEdit.hasSelectedText()) {
+            // KEY_DELETE removes the selected autocomplete suffix without deleting any character before cursor!
+            int start = lineEdit.selectionStart();
+            QString t = lineEdit.text();
+            t.remove(start, lineEdit.selectedText().length());
+            lineEdit.setText(t);
+            lineEdit.setCursorPosition(start);
+        } else {
+            lineEdit.del();
+        }
+    }
+
     void sendBackspace() {
         if (lineEdit.hasSelectedText()) {
             // Browser URL bar behavior: first Backspace removes only the selected autocomplete suffix!
@@ -118,17 +131,17 @@ void testBrowserUrlBarAutocompleteFix() {
     opts.inputMethodName = "Telex";
     sp.setOptions(opts);
 
-    // User types "vieetj" in a browser URL bar that autocompletes "vietnam.gov.vn" on "v", "vi", "vie"
-    // With autocompleteFix = true, VNSnowKey sends (diff.backspaces + 1) Backspaces when replacing characters
+    // 1. User types "vieetj" in a browser URL bar that autocompletes "vietnam.gov.vn" on "v", "vi", "vie"
+    // With autocompleteFix = true, VNSnowKey sends KEY_DELETE before Backspaces to eliminate autocomplete selection
     const std::string raw = "vieetj";
     for (char32_t c : utf8ToU32(raw)) {
         KeyActionDiff diff = sp.processPrintableKey(c);
         if (diff.passThrough) {
             urlBar.insertText(QString::fromStdString(u32CharToUtf8(c)), true);
         } else {
-            // When autocompleteFix is enabled and the URL bar had an active inline suggestion:
-            int bsToSend = diff.backspaces + (urlBar.lineEdit.hasSelectedText() ? 1 : 0);
-            for (int i = 0; i < bsToSend; ++i) {
+            // When autocompleteFix is enabled, KEY_DELETE cancels inline autocomplete suggestion cleanly:
+            urlBar.sendDelete();
+            for (int i = 0; i < diff.backspaces; ++i) {
                 urlBar.sendBackspace();
             }
             urlBar.insertText(QString::fromStdString(u32ToUtf8(diff.textToEmit)), true);
@@ -136,32 +149,47 @@ void testBrowserUrlBarAutocompleteFix() {
     }
     EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "việt");
 
+    // 2. Critical bug reproduction: typing 'd' (browser autocompletes "docs.google.com") + 'd' -> must produce 'đ', NOT 'dđ'!
+    urlBar.lineEdit.clear();
+    urlBar.autocompleteSuggestion = "docs.google.com";
+    sp.reset();
+    // Type first 'd'
+    KeyActionDiff diff1 = sp.processPrintableKey(U'd');
+    urlBar.insertText("d", true);
+    EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "docs.google.com");
+    EXPECT_BOOL_EQ(urlBar.lineEdit.hasSelectedText(), true); // "[ocs.google.com]" is highlighted
+    // Type second 'd' -> with KEY_DELETE autocompleteFix, selection is deleted, 'd' is backspaced, and 'đ' is typed!
+    KeyActionDiff diff2 = sp.processPrintableKey(U'd');
+    EXPECT_BOOL_EQ(diff2.backspaces == 1, true);
+    urlBar.sendDelete(); // UinputEmitter sends KEY_DELETE
+    for (int i = 0; i < diff2.backspaces; ++i) {
+        urlBar.sendBackspace();
+    }
+    urlBar.insertText(QString::fromStdString(u32ToUtf8(diff2.textToEmit)), true);
+    EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "đ"); // Must be "đ", NOT "dđ"!
+
     // Now test Backspace inside browser URL bar while inline autocomplete highlight is active!
     // User types "vie" -> browser selects "tnam.gov.vn" ("vie[tnam.gov.vn]").
     // Physical Backspace in browser URL bar:
     //   BUG without autocompleteFix on passThrough Backspace: 1 Backspace only clears selection "[tnam.gov.vn]" leaving "vie" while engine drops to "vi"!
-    //   FIXED with autocompleteFix: passThrough Backspace sends 2 Backspaces (or clears selection first + deletes 'e'), keeping URL bar ("vi") synced with engine ("vi")!
+    //   FIXED with autocompleteFix: passThrough Backspace sends KEY_DELETE first + deletes 'e', keeping URL bar ("vi") synced with engine ("vi")!
     urlBar.lineEdit.clear();
+    urlBar.autocompleteSuggestion = "vietnam.gov.vn";
     sp.reset();
     auto simulateUrlBarKey = [&](char32_t c, bool isBackspace, bool autocompleteFixEnabled) {
         KeyActionDiff diff = isBackspace ? sp.processBackspace() : sp.processPrintableKey(c);
         if (diff.passThrough) {
             if (isBackspace) {
                 if (autocompleteFixEnabled) {
-                    // Mirror UinputEmitter::emitDiff(1, "", ..., autocompleteFix=true):
-                    // [Space, Backspace] overwrites highlighted inline autocomplete suggestion,
-                    // then the actual Backspace deletes the typed character cleanly.
-                    urlBar.insertText(" ", false);
-                    urlBar.sendBackspace();
+                    urlBar.sendDelete();
                 }
                 urlBar.sendBackspace();
             } else {
                 urlBar.insertText(QString::fromStdString(u32CharToUtf8(c)), true);
             }
         } else {
-            if (urlBar.lineEdit.hasSelectedText()) {
-                urlBar.insertText(" ", false);
-                urlBar.sendBackspace();
+            if (autocompleteFixEnabled) {
+                urlBar.sendDelete();
             }
             for (int i = 0; i < diff.backspaces; ++i) {
                 urlBar.sendBackspace();
@@ -175,12 +203,13 @@ void testBrowserUrlBarAutocompleteFix() {
     EXPECT_BOOL_EQ(urlBar.lineEdit.hasSelectedText(), true);
     // Physical Backspace with autocompleteFix -> must leave "vi", NOT "vie"!
     simulateUrlBarKey(0, true, true);
-    // Verify continuing with "eets" produces "viết" -> Backspace -> "viế" + "j" -> "việ"
+    // Verify continuing with "eets" produces "viết" -> Backspace deletes 't' ("viế") + "jt" -> "việt"
     for (char32_t c : utf8ToU32("eets")) simulateUrlBarKey(c, false, true);
     EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "viết");
     simulateUrlBarKey(0, true, true);
     simulateUrlBarKey(U'j', false, true);
-    EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "việ");
+    simulateUrlBarKey(U't', false, true);
+    EXPECT_STR_EQ(urlBar.lineEdit.text().toStdString(), "việt");
 }
 
 void testQtWidgetsMultiLineEditorAndSettingsWindow(const std::string& tmpDir) {
@@ -279,11 +308,20 @@ void testQtWidgetsMultiLineEditorAndSettingsWindow(const std::string& tmpDir) {
                        migratedMc->delayUs == 2000,
                    true);
 
-    // Explicit v2 config that intentionally removed minecraft stays without minecraft
+    // Explicit legacy config migrating to v4 sets browser autocomplete_fix = true (KEY_DELETE atomic workaround)
+    // and default_delay_us = 0 -> 1200.
     Config v2Custom = Config::fromToml(
         "[general]\nconfig_version = 2\n"
-        "[[app_profiles]]\napp_class = \"firefox\"\nmode = \"default\"\n");
+        "[output]\ndefault_delay_us = 0\n"
+        "[[app_profiles]]\napp_class = \"firefox\"\nmode = \"default\"\nautocomplete_fix = true\n"
+        "[[app_profiles]]\napp_class = \"brave\"\nmode = \"default\"\nautocomplete_fix = true\n");
     EXPECT_BOOL_EQ(v2Custom.findProfileForApp("minecraft") == nullptr, true);
+    EXPECT_BOOL_EQ(v2Custom.defaultDelayUs == 0, true);
+    const AppProfile* v2Ff = v2Custom.findProfileForApp("firefox");
+    const AppProfile* v2Br = v2Custom.findProfileForApp("brave");
+    EXPECT_BOOL_EQ(v2Ff != nullptr && v2Ff->autocompleteFix, true);
+    EXPECT_BOOL_EQ(v2Br != nullptr && v2Br->autocompleteFix, true);
+    EXPECT_BOOL_EQ(Config::createDefault().defaultDelayUs == 0, true);
 
     // 3. Test Dirty Tracking on "Lưu & Áp dụng" button (must be disabled when unchanged!)
     QPushButton* applyBtn = win.applyButton();

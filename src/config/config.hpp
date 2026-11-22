@@ -69,7 +69,7 @@ struct ShortcutConfig {
 };
 
 struct Config {
-    static constexpr int kCurrentConfigVersion = 2;
+    static constexpr int kCurrentConfigVersion = 5;
 
     // [general]
     int configVersion = kCurrentConfigVersion;

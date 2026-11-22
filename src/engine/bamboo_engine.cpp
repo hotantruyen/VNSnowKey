@@ -495,9 +495,10 @@ TransList refreshLastToneTargetImpl(const TransList& composition, bool stdStyle)
     }
     TransPtr newToneTarget = findToneTarget(composition, stdStyle);
     if (lastToneTrans->target != newToneTarget) {
+        TransPtr oldToneTarget = lastToneTrans->target;
         lastToneTrans->target = newToneTarget;
         auto clearTone = std::make_shared<Transformation>();
-        clearTone->target = lastToneTrans->target;
+        clearTone->target = oldToneTarget;
         clearTone->rule.key = 0;
         clearTone->rule.effectType = EffectType::ToneTransformation;
         clearTone->rule.effect = static_cast<uint8_t>(Tone::None);

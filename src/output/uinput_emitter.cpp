@@ -86,6 +86,7 @@ bool UinputEmitter::initialize(std::string* errorMsg) {
     }
 
     uinputFd_ = fd;
+    isCustomFd_ = false;
     activeKeys_.reset();
     physShiftLeft_ = false;
     physShiftRight_ = false;
@@ -94,21 +95,42 @@ bool UinputEmitter::initialize(std::string* errorMsg) {
     return true;
 }
 
+bool UinputEmitter::initializeWithFd(int fd) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (uinputFd_ >= 0) {
+        if (!isCustomFd_) {
+            ::ioctl(uinputFd_, UI_DEV_DESTROY);
+        }
+        ::close(uinputFd_);
+    }
+    uinputFd_ = fd;
+    isCustomFd_ = true;
+    activeKeys_.reset();
+    physShiftLeft_ = false;
+    physShiftRight_ = false;
+    hasVirtualCapsLed_ = false;
+    virtualCapsLockOn_ = false;
+    return uinputFd_ >= 0;
+}
+
 void UinputEmitter::shutdown() {
     releaseAllKeys();
     std::lock_guard<std::mutex> lock(mutex_);
     if (uinputFd_ >= 0) {
-        ::ioctl(uinputFd_, UI_DEV_DESTROY);
+        if (!isCustomFd_) {
+            ::ioctl(uinputFd_, UI_DEV_DESTROY);
+        }
         ::close(uinputFd_);
         uinputFd_ = -1;
     }
     hasVirtualCapsLed_ = false;
     virtualCapsLockOn_ = false;
+    isCustomFd_ = false;
 }
 
 std::string UinputEmitter::findSysInputEventPath() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (uinputFd_ < 0) return {};
+    if (uinputFd_ < 0 || isCustomFd_) return {};
 
     char sysname[64]{};
     if (::ioctl(uinputFd_, UI_GET_SYSNAME(sizeof(sysname)), sysname) >= 0 && sysname[0] != '\0') {
@@ -192,6 +214,27 @@ void UinputEmitter::forwardKeyEvent(uint16_t code, int32_t value) {
     // on press instead of racing against asynchronous kernel EV_LED feedback.
     if (code == KEY_CAPSLOCK && value == 1 && hasVirtualCapsLed_) {
         virtualCapsLockOn_ = !virtualCapsLockOn_;
+    }
+}
+
+void UinputEmitter::forwardTapEvent(uint16_t code, int tapHoldUs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (uinputFd_ < 0) return;
+
+    std::vector<input_event> batch;
+    batch.reserve(4);
+    if (tapHoldUs > 0) {
+        appendKey(batch, code, 1);
+        appendSyn(batch);
+        appendKey(batch, code, 0);
+        appendSyn(batch);
+        flushBatch(batch, tapHoldUs);
+    } else {
+        appendKey(batch, code, 1);
+        appendSyn(batch);
+        appendKey(batch, code, 0);
+        appendSyn(batch);
+        flushBatch(batch, 0);
     }
 }
 
@@ -519,17 +562,14 @@ void UinputEmitter::emitDiff(
     }
 
     // Browser URL bar inline-autocomplete workaround:
-    // When inline autocomplete is highlighted after the cursor (e.g. "gi[thub.com]"),
-    // sending [Space, Backspace] overwrites the highlighted selection and deletes the space,
-    // leaving the cursor right after "gi" with no selection so the subsequent Backspaces delete "i" accurately!
+    // When inline autocomplete is highlighted after the cursor (e.g. "d[ocs.google.com]"),
+    // sending KEY_DELETE deletes the highlighted selection to the right of the cursor,
+    // leaving the cursor right after "d" with no selection so the subsequent Backspaces delete "d" accurately
+    // without inserting any spaces or corrupting normal text inputs!
     if (autocompleteFix && backspaces > 0) {
-        appendKey(batch, KEY_SPACE, 1);
+        appendKey(batch, KEY_DELETE, 1);
         appendSyn(batch);
-        appendKey(batch, KEY_SPACE, 0);
-        appendSyn(batch);
-        appendKey(batch, KEY_BACKSPACE, 1);
-        appendSyn(batch);
-        appendKey(batch, KEY_BACKSPACE, 0);
+        appendKey(batch, KEY_DELETE, 0);
         appendSyn(batch);
     }
 

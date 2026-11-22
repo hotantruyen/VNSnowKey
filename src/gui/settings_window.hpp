@@ -118,6 +118,7 @@ private:
     void updateShortcutHint();
     void refreshThemeIcons();
     void syncSystemdAutostart(bool enabled, bool runSystemctl);
+    QDBusInterface* ensureDbus();
 
     Config config_;
     Config baselineConfig_;

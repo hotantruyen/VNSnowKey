@@ -188,7 +188,7 @@ $(BUILD_DIR)/test_uinput_harness.o: tests/test_uinput_harness.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(BASE_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/test_e2e_daemon.o: tests/test_e2e_daemon.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(BASE_CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(BASE_CFLAGS) $(shell pkg-config --cflags libsystemd) -c $< -o $@
 
 $(BUILD_DIR)/test_app_integration.o: tests/test_app_integration.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(BASE_CFLAGS) $(QT_GUI_CFLAGS) -c $< -o $@
@@ -216,7 +216,7 @@ $(BUILD_DIR)/test_uinput_harness: $(BUILD_DIR)/test_uinput_harness.o $(ENGINE_OB
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) $(BASE_LIBS) -o $@
 
 $(BUILD_DIR)/test_e2e_daemon: $(BUILD_DIR)/test_e2e_daemon.o $(ENGINE_OBJS) $(CORE_IO_OBJS)
-	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) $(BASE_LIBS) -o $@
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) $(BASE_LIBS) $(shell pkg-config --libs libsystemd) -o $@
 
 $(BUILD_DIR)/test_app_integration: $(BUILD_DIR)/test_app_integration.o $(ENGINE_OBJS) $(CORE_IO_OBJS) $(BUILD_DIR)/focus_tracker.o $(BUILD_DIR)/game_mode_monitor.o $(GUI_SNI_OBJS) $(BUILD_DIR)/tray_controller.o $(BUILD_DIR)/settings_window.o $(BUILD_DIR)/moc_tray_controller.o $(BUILD_DIR)/moc_settings_window.o
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) $(BASE_LIBS) $(QT_GUI_LIBS) -o $@
@@ -226,12 +226,14 @@ $(BUILD_DIR)/test_gui_single_instance: $(BUILD_DIR)/test_gui_single_instance.o
 
 tests: $(TEST_BINARIES)
 
+DBUS_SESSION_RUN := $(shell command -v dbus-run-session 2>/dev/null)
+
 test: all
 	./$(BUILD_DIR)/test_bamboo_engine
 	./$(BUILD_DIR)/test_uinput_harness
-	./$(BUILD_DIR)/test_e2e_daemon
-	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/test_app_integration
-	./$(BUILD_DIR)/test_gui_single_instance
+	$(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_e2e_daemon
+	QT_QPA_PLATFORM=offscreen $(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_app_integration
+	$(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_gui_single_instance
 	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/vnsnowkey-gui --test-icons
 
 sanitize:
@@ -239,10 +241,11 @@ sanitize:
 	$(MAKE) -j$$(nproc) SANITIZE=1 all
 	./$(BUILD_DIR)/test_bamboo_engine
 	./$(BUILD_DIR)/test_uinput_harness
-	./$(BUILD_DIR)/test_e2e_daemon
-	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/test_app_integration
-	./$(BUILD_DIR)/test_gui_single_instance
+	$(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_e2e_daemon
+	QT_QPA_PLATFORM=offscreen $(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_app_integration
+	$(DBUS_SESSION_RUN) ./$(BUILD_DIR)/test_gui_single_instance
 	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/vnsnowkey-gui --test-icons
+	$(MAKE) -j$$(nproc) all
 
 install: $(BINARIES)
 	install -Dm755 $(BUILD_DIR)/vnsnowkeyd "$(DESTDIR)$(PREFIX)/bin/vnsnowkeyd"

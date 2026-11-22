@@ -102,11 +102,13 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
     processor_.setOptions(config_.toSessionOptions());
     processor_.macroTable().setMacros(config_.macros);
 
-    capture_.setOnLanguageToggled([this](bool newVie) {
-        QMetaObject::invokeMethod(this, [this, newVie]() {
+    capture_.setOnLanguageToggled([this](bool newVie, const std::string& appClassSnapshot) {
+        QMetaObject::invokeMethod(this, [this, newVie, appClassSnapshot]() {
             effectiveVietnameseEnabled_ = newVie;
-            const bool hasFocusedApp = !focusTracker_.currentFocus().appClass.empty();
-            focusTracker_.recordAppLanguageState(newVie, config_.rememberPerAppLang);
+            const std::string activeFocusApp = focusTracker_.currentFocus().appClass;
+            const std::string effectiveApp = !appClassSnapshot.empty() ? appClassSnapshot : activeFocusApp;
+            const bool hasFocusedApp = !effectiveApp.empty();
+            focusTracker_.recordAppLanguageStateForApp(appClassSnapshot, newVie, config_.rememberPerAppLang);
             if (!config_.rememberPerAppLang || !hasFocusedApp) {
                 config_.vietnameseEnabled = newVie;
                 config_.saveToFile(configPath_);
@@ -120,6 +122,8 @@ DaemonServer::DaemonServer(const std::string& configPath, bool noGrab, QObject* 
             }
         }, Qt::QueuedConnection);
     });
+
+    connect(&xkbWatchdogTimer_, &QTimer::timeout, this, &DaemonServer::onXkbWatchdogTimer);
 
     capture_.setOnPanicTriggered([this]() {
         QMetaObject::invokeMethod(this, [this]() {
@@ -203,16 +207,27 @@ DaemonServer::~DaemonServer() {
 }
 
 bool DaemonServer::start(std::string* errorMsg) {
+    const bool isTest = xwayland_env::isIsolatedTestEnv();
+
     // 1. Install XKB overlay (~/.config/xkb/symbols/us & types/level5)
     std::string xkbErr;
-    const bool wasInstalled = XkbOverlay::isOverlayInstalled();
-    emitter_.xkbOverlay().installOverlayFiles("", &xkbErr);
+    const bool wasInstalled = isTest ? true : XkbOverlay::isOverlayInstalled();
+    if (!isTest) {
+        emitter_.xkbOverlay().installOverlayFiles("", &xkbErr);
+    }
 
-    // 2. Initialize /dev/uinput virtual keyboard
+    // 2. Initialize virtual keyboard (or attach custom test output fd)
     std::string uinputErr;
-    if (!emitter_.initialize(&uinputErr)) {
-        if (errorMsg) *errorMsg = uinputErr;
-        // Continue running D-Bus service even if uinput fails so GUI/CLI doctor can report exact diagnostics!
+    if (const char* testOutFdStr = std::getenv("VNSNOWKEY_TEST_OUT_FD")) {
+        try {
+            int testOutFd = std::stoi(testOutFdStr);
+            emitter_.initializeWithFd(testOutFd);
+        } catch (...) {}
+    } else {
+        if (!emitter_.initialize(&uinputErr)) {
+            if (errorMsg) *errorMsg = uinputErr;
+            // Continue running D-Bus service even if uinput fails so GUI/CLI doctor can report exact diagnostics!
+        }
     }
 
     // 3. Register D-Bus service org.vnsnowkey.Daemon on session bus
@@ -230,24 +245,36 @@ bool DaemonServer::start(std::string* errorMsg) {
     // 4. Start Multi-Desktop Window Focus Tracker (KDE KWin, Hyprland, Sway, GNOME Shell, X11)
     focusTracker_.startDesktopFocusMonitor();
     gameModeMonitor_.setCompositorIsGnome(focusTracker_.activeBackend() == DesktopBackend::GnomeShell);
-    bus.connect(
-        QStringLiteral("org.kde.KWin"),
-        QStringLiteral("/VirtualKeyboard"),
-        QStringLiteral("org.kde.kwin.VirtualKeyboard"),
-        QStringLiteral("activeClientSupportsTextInputChanged"),
-        this,
-        SLOT(onKWinTextInputChanged()));
-    gameModeMonitor_.start();
+    if (!isTest) {
+        bus.connect(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/VirtualKeyboard"),
+            QStringLiteral("org.kde.kwin.VirtualKeyboard"),
+            QStringLiteral("activeClientSupportsTextInputChanged"),
+            this,
+            SLOT(onKWinTextInputChanged()));
+        gameModeMonitor_.start();
+    }
 
     // 5. Verify and apply XKB overlay AFTER virtual keyboard creation & desktop backend detection.
     // On X11 (GNOME Xorg / KDE X11), X server does not read ~/.config/xkb at login, so xkbcomp must run every session.
     const bool wayland = XkbOverlay::isWaylandSession();
-    verifyAndEnsureXkbOverlay(!wasInstalled || !wayland, false);
-    if (!wayland && !xwayland_env::isIsolatedTestEnv()) {
-        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
-        // Guard against late desktop startup daemons (gsd-keyboard / kded) overwriting X11 keymap right after login.
-        QTimer::singleShot(1500, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
-        QTimer::singleShot(4500, this, [this]() { verifyAndEnsureXkbOverlay(true, true); });
+    if (!isTest) {
+        verifyAndEnsureXkbOverlay(!wasInstalled || !wayland, false);
+        if (!wayland) {
+            capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
+            // Guard against late desktop startup daemons (gsd-keyboard / kded) overwriting X11 keymap right after login.
+            QTimer::singleShot(1500, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
+            QTimer::singleShot(4500, this, [this]() { verifyAndEnsureXkbOverlay(true, true); });
+        }
+        sysSleepConnected_ = QDBusConnection::systemBus().connect(
+            QStringLiteral("org.freedesktop.login1"),
+            QStringLiteral("/org/freedesktop/login1"),
+            QStringLiteral("org.freedesktop.login1.Manager"),
+            QStringLiteral("PrepareForSleep"),
+            this,
+            SLOT(onPrepareForSleep(bool)));
+        xkbWatchdogTimer_.start(10000);
     }
 
     // 6. Start evdev capture thread
@@ -255,7 +282,9 @@ bool DaemonServer::start(std::string* errorMsg) {
     capture_.updateConfig(config_);
     if (!noGrab_ && emitter_.isInitialized()) {
         std::vector<std::string> explicitDevs;
-        if (const char* envDevs = std::getenv("VNSNOWKEY_ONLY_DEVICES")) {
+        if (const char* testInFdStr = std::getenv("VNSNOWKEY_TEST_IN_FD")) {
+            explicitDevs.push_back("fd:" + std::string(testInFdStr));
+        } else if (const char* envDevs = std::getenv("VNSNOWKEY_ONLY_DEVICES")) {
             std::stringstream ss(envDevs);
             std::string item;
             while (std::getline(ss, item, ':')) {
@@ -270,6 +299,17 @@ bool DaemonServer::start(std::string* errorMsg) {
 }
 
 void DaemonServer::stop() {
+    xkbWatchdogTimer_.stop();
+    if (sysSleepConnected_) {
+        QDBusConnection::systemBus().disconnect(
+            QStringLiteral("org.freedesktop.login1"),
+            QStringLiteral("/org/freedesktop/login1"),
+            QStringLiteral("org.freedesktop.login1.Manager"),
+            QStringLiteral("PrepareForSleep"),
+            this,
+            SLOT(onPrepareForSleep(bool)));
+        sysSleepConnected_ = false;
+    }
     auto bus = QDBusConnection::sessionBus();
     imBridgeWatcher_.setWatchedServices(QStringList{});
     bus.disconnect(
@@ -448,15 +488,56 @@ bool DaemonServer::ReapplyXkbOverlay() {
 }
 
 void DaemonServer::onKeyboardHotplug() {
-    if (!XkbOverlay::isWaylandSession() && !xwayland_env::isIsolatedTestEnv()) {
-        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
-        // Re-check after Xorg/gsd-keyboard settles on newly plugged keyboard (~250ms)
-        QTimer::singleShot(250, this, [this]() { verifyAndEnsureXkbOverlay(true, false); });
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return;
     }
+    if (!XkbOverlay::isWaylandSession()) {
+        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
+    }
+    // Re-check after Xorg / XWayland / compositor settles on newly plugged keyboard (~250ms)
+    QTimer::singleShot(250, this, [this]() { runXkbWatchdogCheck(true); });
 }
 
 void DaemonServer::onXkbMappingChanged() {
-    if (!XkbOverlay::isWaylandSession() && !xwayland_env::isIsolatedTestEnv()) {
+    if (!xwayland_env::isIsolatedTestEnv()) {
+        runXkbWatchdogCheck(true);
+    }
+}
+
+void DaemonServer::onXkbWatchdogTimer() {
+    runXkbWatchdogCheck(false);
+}
+
+void DaemonServer::onPrepareForSleep(bool goingToSleep) {
+    if (goingToSleep || xwayland_env::isIsolatedTestEnv()) {
+        return;
+    }
+    // Recover hardware modifier state, CapsLock LED sync, and XKB overlay immediately after resume
+    capture_.resyncAllModifiersFromKernel();
+    if (!XkbOverlay::isWaylandSession()) {
+        capture_.setExternalCapsLockHint(XkbOverlay::queryX11CapsLockState());
+    }
+    QTimer::singleShot(400, this, [this]() { runXkbWatchdogCheck(true); });
+    QTimer::singleShot(1800, this, [this]() { runXkbWatchdogCheck(true); });
+}
+
+void DaemonServer::runXkbWatchdogCheck(bool forceCheck) {
+    if (xwayland_env::isIsolatedTestEnv()) {
+        return;
+    }
+    bool needVerify = forceCheck || !xkbOverlayVerified_ || (capture_.xkbFallbackMethod() >= 0);
+    if (!XkbOverlay::isOverlayInstalled()) {
+        std::string err;
+        if (emitter_.xkbOverlay().installOverlayFiles("", &err)) {
+            ++xkbAutoHealCount_;
+            needVerify = true;
+        }
+    }
+    const std::string curDisp = XkbOverlay::resolveX11Display();
+    if (!curDisp.empty() && curDisp != lastVerifiedX11Display_) {
+        needVerify = true;
+    }
+    if (needVerify) {
         verifyAndEnsureXkbOverlay(true, false);
     }
 }
@@ -469,9 +550,19 @@ void DaemonServer::verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFail
         return;
     }
 
+    if (!XkbOverlay::isOverlayInstalled()) {
+        std::string err;
+        if (emitter_.xkbOverlay().installOverlayFiles("", &err)) {
+            ++xkbAutoHealCount_;
+            allowReload = true;
+        }
+    }
+
     const DesktopBackend be = focusTracker_.activeBackend();
     const XkbCompositorHint hint = backendToXkbHint(be);
     const bool wayland = XkbOverlay::isWaylandSession();
+    const bool filesInstalled = XkbOverlay::isOverlayInstalled();
+    const std::string curDisp = XkbOverlay::resolveX11Display();
 
     std::string layout;
     std::string variant;
@@ -499,11 +590,17 @@ void DaemonServer::verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFail
         if (wayland) {
             XkbOverlay::reloadCompositorXkb(hint);
             std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            if (XkbOverlay::probeX11KeymapStatus(&missing) == XkbLiveStatus::InactiveOverlayMissing) {
+                XkbOverlay::applyX11XkbOverlay();
+            }
         } else {
             XkbOverlay::applyX11XkbOverlay();
         }
         missing.clear();
         status = XkbOverlay::probeX11KeymapStatus(&missing);
+        if (status == XkbLiveStatus::VerifiedActive) {
+            ++xkbAutoHealCount_;
+        }
     }
 
     if (status == XkbLiveStatus::VerifiedActive ||
@@ -511,6 +608,17 @@ void DaemonServer::verifyAndEnsureXkbOverlay(bool allowReload, bool notifyOnFail
         xkbOverlayVerified_ = true;
         xkbFailureNotified_ = false;
         xkbDiagnosticNote_.clear();
+        lastVerifiedX11Display_ = curDisp;
+        capture_.setXkbFallbackMethod(-1);
+        return;
+    }
+
+    // Native Wayland compositors read ~/.config/xkb directly even if XWayland probe failed or isn't up yet;
+    // keep XkbKeymap enabled for native Wayland windows instead of forcing slow/incompatible fallbacks.
+    if (wayland && filesInstalled && status != XkbLiveStatus::ToolMissing) {
+        xkbOverlayVerified_ = false;
+        xkbDiagnosticNote_ = "XWayland thiếu: " + (missing.empty() ? "agrave" : missing) +
+                             " (Wayland thuần vẫn giữ XKB)";
         capture_.setXkbFallbackMethod(-1);
         return;
     }
@@ -544,6 +652,29 @@ void DaemonServer::NotifyWindowFocus(
         windowId.toStdString(),
         config_,
         effectiveVietnameseEnabled_);
+    // Catch lazy XWayland initialization as soon as user switches into an X11/XWayland window.
+    runXkbWatchdogCheck(false);
+}
+
+QString DaemonServer::computeViInactiveReason() const {
+    if (config_.safeMode || capture_.isInSafeMode()) {
+        return QStringLiteral("safe_mode");
+    }
+    const WindowFocusInfo focus = focusTracker_.currentFocus();
+    if (config_.bypassPasswordDialogs && focus.isPasswordDialog) {
+        return QStringLiteral("password_dialog");
+    }
+    const AppProfile* appProf = config_.findProfileForApp(focus.appClass);
+    if (appProf && appProf->mode == AppMode::Excluded) {
+        return QStringLiteral("app_excluded");
+    }
+    if (appProf && appProf->mode == AppMode::GameMode && !capture_.isGameChatActive()) {
+        return QStringLiteral("game_mode_3d");
+    }
+    if (!effectiveVietnameseEnabled_) {
+        return QStringLiteral("user_or_per_app_en");
+    }
+    return QStringLiteral("none");
 }
 
 void DaemonServer::NotifyDesktopCursorVisible(bool visible) {
@@ -588,6 +719,10 @@ QString DaemonServer::GetStatusJson() {
     obj["xkb_overlay_installed"] = XkbOverlay::isOverlayInstalled();
     obj["xkb_overlay_active"] = xkbOverlayVerified_;
     obj["xkb_fallback_active"] = (capture_.xkbFallbackMethod() >= 0);
+    obj["xkb_auto_heals"] = static_cast<qint64>(xkbAutoHealCount_);
+    obj["stuck_mod_recoveries"] = static_cast<qint64>(capture_.stuckModRecoveries());
+    obj["syn_drop_recoveries"] = static_cast<qint64>(capture_.synDropRecoveries());
+    obj["vi_inactive_reason"] = computeViInactiveReason();
     if (!xkbDiagnosticNote_.empty()) {
         obj["xkb_warning"] = QString::fromStdString(xkbDiagnosticNote_);
     }
@@ -761,6 +896,7 @@ std::string DaemonServer::buildDiagnosticsReport(
         }
         oss << "    - Bàn phím đang chiếm quyền (EVIOCGRAB): " << kbds << "\n";
         oss << "    - Thiết bị chuột theo dõi click: " << mice << "\n";
+        oss << "    - Tự phục hồi modifier kẹt (EVIOCGKEY): " << capture->stuckModRecoveries() << "\n";
         for (const auto& d : devs) {
             oss << "      * " << d.path << " [" << d.name << "] "
                 << (d.isKeyboard ? "(Bàn phím" + std::string(d.isGrabbed ? " - ĐÃ GRAB)" : " - CHƯA GRAB)") : "(Chuột)") << "\n";

@@ -684,6 +684,20 @@ KeyActionDiff SessionProcessor::processPrintableKey(char32_t ch) {
     rawKeys_.push_back(ch);
     keyForcedEnglish_.push_back(0);
 
+    if (wordLockedRaw_ && rawKeys_.size() <= 10) {
+        // Auto-unlock if the buffer now evolves into a valid Vietnamese syllable (e.g. fast typing
+        // of words like "truyền", "nghiên", "khoảng" where an intermediate key briefly triggered restore).
+        BambooEngine testEng(engine_.getInputMethod(), engine_.getFlag());
+        for (char32_t k : rawKeys_) {
+            testEng.processKey(k, VietnameseMode);
+        }
+        auto [testPrevSyl, testLastSyl] = extractLastSyllable(testEng.getComposition());
+        if (testPrevSyl.empty() && testEng.isValid(false)) {
+            wordLockedRaw_ = false;
+            std::fill(keyForcedEnglish_.begin(), keyForcedEnglish_.end(), 0);
+        }
+    }
+
     bool restored = false;
     bool suppressLastKey = false;
     bool validSingleSyllable = false;
@@ -879,7 +893,6 @@ KeyActionDiff SessionProcessor::processBackspace() {
             }
             const bool withinShortTypoWindow = (peakRawLenSinceLock_ <= restoredAtRawLen_ + 1);
             const bool canUnlockMistypedViWord =
-                options_.autoRestoreEnglish &&
                 candPrevSyl.empty() && candEng.isValid(true) &&
                 candVie != rawKeys_ &&
                 (withinShortTypoWindow || (rawKeys_.size() >= 4 && hasToneOrD));
@@ -896,7 +909,6 @@ KeyActionDiff SessionProcessor::processBackspace() {
             }
         }
     } else {
-        // Use BambooEngine's removeLastChar to remove the last base character and its attached marks/tones
         engine_.removeLastChar(true);
         std::u32string newEngineRaw = engine_.getProcessedU32(EnglishMode);
         rawKeys_ = newEngineRaw;

@@ -27,7 +27,7 @@
 namespace {
 
 void printUsage() {
-    std::cout << "VNSnowKey CLI v1.0.4 — Bộ gõ tiếng Việt cho Linux (Wayland & X11)\n\n"
+    std::cout << "VNSnowKey CLI v1.0.6 — Bộ gõ tiếng Việt cho Linux (Wayland & X11)\n\n"
               << "Cách dùng:\n"
               << "  vnsnowkey ctl toggle                 Đổi nhanh chế độ Tiếng Việt (VI) / Tiếng Anh (EN)\n"
               << "  vnsnowkey ctl vi                     Chuyển sang chế độ Tiếng Việt (VI)\n"

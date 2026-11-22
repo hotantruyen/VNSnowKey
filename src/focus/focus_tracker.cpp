@@ -311,6 +311,11 @@ FocusTracker::~FocusTracker() {
 bool FocusTracker::startDesktopFocusMonitor() {
     stopDesktopFocusMonitor();
 
+    if (xwayland_env::isIsolatedTestEnv()) {
+        activeBackend_ = DesktopBackend::None;
+        return true;
+    }
+
     std::string waylandDisp = getEnvStr("WAYLAND_DISPLAY");
     if (waylandDisp.empty() && !xwayland_env::isIsolatedTestEnv()) {
         std::string sockPath = xwayland_env::discoverWaylandSocketPath();
@@ -1078,14 +1083,21 @@ void FocusTracker::onWindowFocusChanged(
 }
 
 void FocusTracker::recordAppLanguageState(bool vietnameseEnabled, bool rememberPerAppLang) {
+    recordAppLanguageStateForApp({}, vietnameseEnabled, rememberPerAppLang);
+}
+
+void FocusTracker::recordAppLanguageStateForApp(
+    const std::string& appClass, bool vietnameseEnabled, bool rememberPerAppLang) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!currentFocus_.isPasswordDialog) {
-        if (!rememberPerAppLang || currentFocus_.appClass.empty()) {
-            lastDefaultLang_ = vietnameseEnabled;
-        }
-        if (!currentFocus_.appClass.empty()) {
-            perAppLangMemory_[currentFocus_.appClass] = vietnameseEnabled;
-        }
+    const std::string& targetApp = !appClass.empty() ? appClass : currentFocus_.appClass;
+    if (targetApp == currentFocus_.appClass && currentFocus_.isPasswordDialog) {
+        return;
+    }
+    if (!rememberPerAppLang || targetApp.empty()) {
+        lastDefaultLang_ = vietnameseEnabled;
+    }
+    if (!targetApp.empty()) {
+        perAppLangMemory_[targetApp] = vietnameseEnabled;
     }
 }
 

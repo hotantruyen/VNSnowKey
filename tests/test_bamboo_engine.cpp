@@ -619,16 +619,22 @@ void testBackspaceAndEditingParity() {
     opts.autoRestoreEnglish = true;
     sp.setOptions(opts);
 
-    // LỖI 2 core repros: Backspace must remove only the last displayed char and keep word buffer
+    // Backspace character-by-character: Backspacing a word (e.g. "toans" -> "toán") deletes the last character ("toá").
     EXPECT_STR_EQ(simulateSessionTyping(sp, "toans\b"), "toá");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "toans\bf"), "toà");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans\bfn"), "toàn");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets\b"), "viế");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets\bj"), "việ");
     sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets\bjt"), "việt");
+    sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "yeens\bf"), "yề");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "yeens\bfn"), "yền");
     sp.reset();
 
     // Verify tracked displayedWord().size() always matches virtual screen length after every key & Backspace
@@ -663,7 +669,11 @@ void testBackspaceAndEditingParity() {
     // Backspace with uppercase / mixed case
     EXPECT_STR_EQ(simulateSessionTyping(sp, "TOANS\bF"), "TOÀ");
     sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "TOANS\bFN"), "TOÀN");
+    sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "Vieets\bJ"), "Việ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "Vieets\bJt"), "Việt");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "DDas\byj "), "Đỵ ");
     sp.reset();
@@ -674,6 +684,8 @@ void testBackspaceAndEditingParity() {
     EXPECT_STR_EQ(simulateSessionTyping(sp, "hoaf "), "hòa ");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "toans\bf"), "tòa");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans\bfn"), "toàn");
     sp.reset();
 
     // Auto-restored English words must delete strictly 1 char per Backspace and never morph back into Vietnamese
@@ -730,13 +742,19 @@ void testBackspaceAndEditingParity() {
     }
 
     // Backspacing back across Space / punctuation / multiple words to fix tone marks ("xoá lùi về sửa dấu")
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans \bf "), "toàn ");
+    sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "toans \b\bf "), "toà ");
     sp.reset();
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans \bf "), "toàn ");
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans \b\bfn "), "toàn ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets \bj "), "việt ");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets \b\bj "), "việ ");
     sp.reset();
-    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets \bj "), "việt ");
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieets \b\bjt "), "việt ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toans hocj\b\b\b\bf "), "toàn ");
     sp.reset();
     EXPECT_STR_EQ(simulateSessionTyping(sp, "toans hocj\b\b\b\b\bf "), "toà ");
     sp.reset();
@@ -810,12 +828,16 @@ void testArrowKeyCursorNavigation() {
     opts.autoRestoreEnglish = true;
     sp.setOptions(opts);
 
-    // Move Left past Space into "toán", Backspace 'n' -> "toá", type 'f' -> "toà", Space stays intact
+    // Move Left past Space into "toán", Backspace deletes 'n' -> "toá", type 'f' -> "toà", Space stays intact
     EXPECT_STR_EQ(simulateCursorSession(sp, "toans <\bf"), "toà ");
     sp.reset();
+    EXPECT_STR_EQ(simulateCursorSession(sp, "toans <\bfn"), "toàn ");
+    sp.reset();
 
-    // Move Left back past an entire second word ("toán học" -> left 4 chars -> "toán| học") and edit first word
+    // Move Left back past an entire second word ("toán học" -> left 4 chars -> "toán| học") and edit tone
     EXPECT_STR_EQ(simulateCursorSession(sp, "toans hocj<<<<\bf>>>>!"), "toà học!");
+    sp.reset();
+    EXPECT_STR_EQ(simulateCursorSession(sp, "toans hocj<<<<\bfn>>>>!"), "toàn học!");
     sp.reset();
 
     // Back inside mid-word ("toán" -> Left before 'n' -> Delete 'n' -> type 'n' -> "toán ")
@@ -1024,6 +1046,39 @@ void testMistypedUndoAndSpellCheckEnglish() {
 
     // Alias "TCVN3" must encode identically to "TCVN3 (ABC)"
     EXPECT_STR_EQ(encodeCharset("TCVN3", "Tiếng Việt"), encodeCharset(CHARSET_TCVN3, "Tiếng Việt"));
+
+    // Fast-typing permutations of "truyền" across Simple Telex & Telex with Auto-Restore OFF & ON
+    for (bool ar : {false, true}) {
+        SessionOptions truyenOpts;
+        truyenOpts.vietnameseEnabled = true;
+        truyenOpts.inputMethodName = "Simple Telex";
+        truyenOpts.spellCheckEnabled = true;
+        truyenOpts.autoRestoreEnglish = ar;
+        truyenOpts.modernToneStyle = true;
+        sp.setOptions(truyenOpts);
+
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeenf "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeefn "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyefen "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyefne "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyenef "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "Hoof Taasn Truyeenf "), "Hồ Tấn Truyền ");
+
+        truyenOpts.inputMethodName = "Telex";
+        sp.setOptions(truyenOpts);
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeenf "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeefn "), "truyền ");
+        sp.reset();
+        EXPECT_STR_EQ(simulateSessionTyping(sp, "truyefen "), "truyền ");
+    }
 }
 
 void testPostClickWithoutReset() {
@@ -1163,6 +1218,165 @@ void testPostClickWithoutReset() {
     EXPECT_STR_EQ(u32ToUtf8(box2), "nam ");
 }
 
+void testFastRolloverAndAutoRestoreOffBackspaceUnlock() {
+    SessionProcessor sp;
+    SessionOptions opts;
+    opts.inputMethodName = "Simple Telex";
+    opts.freeToneMarking = true;
+    opts.modernToneStyle = true;
+    opts.spellCheckEnabled = true;
+    opts.autoRestoreEnglish = false;
+    sp.setOptions(opts);
+
+    // Fast-typing out-of-order Telex key sequences in Simple Telex
+    auto runSimple = [&](const std::string& keys) {
+        sp.reset();
+        return simulateSessionTyping(sp, keys);
+    };
+    EXPECT_STR_EQ(runSimple("truongfw "), "trường ");
+    EXPECT_STR_EQ(runSimple("tiengse "), "tiếng ");
+    EXPECT_STR_EQ(runSimple("chuyense "), "chuyến ");
+    EXPECT_STR_EQ(runSimple("nguoifw "), "người ");
+    EXPECT_STR_EQ(runSimple("dduocjw "), "được ");
+    EXPECT_STR_EQ(runSimple("tuyeejt "), "tuyệt ");
+    EXPECT_STR_EQ(runSimple("Tieengs Vieetj ddoongf booj "), "Tiếng Việt đồng bộ ");
+
+    // If wordLockedRaw_ ever activates via an invalid ASCII-prefix suffix then user fixes via Backspace,
+    // Backspace must still unlock Vietnamese even with autoRestoreEnglish = false!
+    sp.reset();
+    std::u32string screen;
+    auto typeSeq = [&](const std::string& seq) {
+        for (char c : seq) {
+            if (c == '\b') {
+                auto d = sp.processBackspace();
+                if (d.passThrough) {
+                    if (!screen.empty()) screen.pop_back();
+                } else {
+                    for (int i = 0; i < d.backspaces && !screen.empty(); ++i) screen.pop_back();
+                    screen += d.textToEmit;
+                }
+            } else {
+                auto d = sp.processPrintableKey(static_cast<char32_t>(static_cast<unsigned char>(c)));
+                if (d.passThrough) {
+                    screen.push_back(static_cast<char32_t>(static_cast<unsigned char>(c)));
+                } else {
+                    for (int i = 0; i < d.backspaces && !screen.empty(); ++i) screen.pop_back();
+                    screen += d.textToEmit;
+                }
+            }
+        }
+    };
+    typeSeq("taasna"); // mistyped extra 'a' after 'tấn' -> autoRestoreEnglish=false suppresses only or locks
+    typeSeq("\bf ");
+    // Also test typo-lock on 'toaan' -> backspacing back to 'toa' unlocks and restores tone placement
+    sp.reset();
+    screen.clear();
+    typeSeq("toaan");
+    typeSeq("\b\bns ");
+    EXPECT_STR_EQ(u32ToUtf8(screen), "toán ");
+}
+
+void testComprehensiveToneCorrectionAndFastTyping() {
+    SessionProcessor sp;
+    SessionOptions opts;
+    opts.inputMethodName = "Telex";
+    opts.modernToneStyle = true;
+    opts.freeToneMarking = true;
+    opts.spellCheckEnabled = true;
+    opts.autoRestoreEnglish = true;
+    sp.setOptions(opts);
+
+    // 1. All complex diphthongs, triphthongs, and final consonants tone-editing parity
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeens\bf"), "truyề");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeens\bfn"), "truyền");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeenf\bs"), "truyế");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeenf\bsn"), "truyến");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "nghieengs\bj"), "nghiện");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "nghieengs\bjg"), "nghiệng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "nghieengr\bs"), "nghiến");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "nghieengr\bsg"), "nghiếng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khoangr\bf"), "khoàn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khoangr\bfg"), "khoàng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khoangr\bs"), "khoán");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khoangr\bsg"), "khoáng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "phuowngj\bs"), "phướn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "phuowngj\bsg"), "phướng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "thuowngf\bsg"), "thướng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chuois\bji"), "chuọi");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "dduowngf\bsg"), "đướng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "quynhr\bf"), "quỳn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "quynhr\bfh"), "quỳnh");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khuyas\bf"), "khuỳ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "khuyas\bfa"), "khuỳa");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ngoanwf\bs"), "ngoắ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ngoanwf\bsn"), "ngoắn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ngheechs\bj"), "nghệc");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "ngheechs\bjh"), "nghệch");
+    sp.reset();
+
+    // 2. Rapid multiple tone cycles on the same word ("sửa dấu liên hoàn")
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toansfrxj "), "toạn ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaansfrxj "), "chận ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyeensfrx "), "truyễn ");
+    sp.reset();
+
+    // 3. VNI input method tone editing
+    opts.inputMethodName = "VNI";
+    sp.setOptions(opts);
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "toan12"), "toàn");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "truyen612"), "truyền");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "viet615"), "việt");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "d9uong712"), "đường");
+    sp.reset();
+
+    // 4. Mixed-case and CapsLock tone editing
+    opts.inputMethodName = "Telex";
+    sp.setOptions(opts);
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "TRUYEENS\bFN"), "TRUYỀN");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "Nghieengs\bJg"), "Nghiệng");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "KHOANGR\bSG"), "KHOÁNG");
+    sp.reset();
+
+    // 5. Cross-word delimiter tone editing
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "chaof banj \bs "), "chào bán ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "hocj sinh, \b\bs "), "học sính ");
+    sp.reset();
+    EXPECT_STR_EQ(simulateSessionTyping(sp, "vieetj nam! \b\bs "), "việt nám ");
+    sp.reset();
+}
+
 } // namespace
 
 int main() {
@@ -1174,6 +1388,8 @@ int main() {
     testArrowKeyCursorNavigation();
     testMistypedUndoAndSpellCheckEnglish();
     testPostClickWithoutReset();
+    testFastRolloverAndAutoRestoreOffBackspaceUnlock();
+    testComprehensiveToneCorrectionAndFastTyping();
 
     std::cout << "Engine Tests Summary: " << g_passed << " passed, " << g_failed << " failed.\n";
     return (g_failed == 0) ? 0 : 1;
