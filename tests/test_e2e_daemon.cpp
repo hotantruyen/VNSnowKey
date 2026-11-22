@@ -305,6 +305,8 @@ int main(int argc, char* argv[]) {
     overlay.installOverlayFiles(tmpDir + "/xkb");
 
     Config cfg = Config::createDefault();
+    cfg.autoRestoreEnglish = true;
+    cfg.rememberPerAppLang = true;
     cfg.osdEnabled = false; // Avoid popping OSD during automated test
     bool updatedFf = false;
     for (auto& prof : cfg.appProfiles) {
@@ -1211,6 +1213,8 @@ int main(int argc, char* argv[]) {
 
         // 8b-7. Fast burst typing in Brave & Firefox with unified 1200us pacing and no Space+Bksp autocompleteFix
         Config fastCfg = Config::createDefault();
+        fastCfg.autoRestoreEnglish = true;
+        fastCfg.rememberPerAppLang = true;
         fastCfg.osdEnabled = false;
         fastCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
         runCmd("./build/vnsnowkey ctl reload");
@@ -1295,6 +1299,27 @@ int main(int argc, char* argv[]) {
         runCmd("./build/vnsnowkey ctl en");
         std::this_thread::sleep_for(std::chrono::milliseconds(15));
         EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vi_inactive_reason\":\"user_or_per_app_en\"") != std::string::npos, true);
+
+        // 8b-9. Test defaults: rememberPerAppLang = true and test synchronization when rememberPerAppLang = false
+        Config defaultSyncCfg = Config::createDefault();
+        EXPECT_BOOL_EQ(defaultSyncCfg.rememberPerAppLang == true, true);
+        EXPECT_BOOL_EQ(defaultSyncCfg.autoRestoreEnglish == false, true);
+        defaultSyncCfg.rememberPerAppLang = false; // explicitly test global sync
+        defaultSyncCfg.osdEnabled = false;
+        defaultSyncCfg.saveToFile(tmpDir + "/vnsnowkey/config.toml");
+        runCmd("./build/vnsnowkey ctl reload");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        runCmd("./build/vnsnowkey ctl en");
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        // Switching to any other app keeps EN because it's globally synchronized!
+        runCmd("dbus-send --session --type=method_call --dest=org.vnsnowkey.Daemon /org/vnsnowkey/Daemon "
+               "org.vnsnowkey.Daemon.NotifyWindowFocus string:\"org.kde.kwrite\" string:\"kwrite\" "
+               "string:\"Untitled\" string:\"w_kwrite\"");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":false") != std::string::npos, true);
+        runCmd("./build/vnsnowkey ctl vi");
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        EXPECT_BOOL_EQ(runCmd("./build/vnsnowkey ctl status").find("\"vietnamese_enabled\":true") != std::string::npos, true);
     }
 
     // 9. Test SIGTERM Clean Exit (daemon must exit cleanly)

@@ -101,6 +101,7 @@ private Q_SLOTS:
     void onRefreshDiagnostics();
     void onToggleDaemonModeClicked();
     void onPanicOrResumeClicked();
+    void onCheckUpdateClicked();
 
 private:
     void setupUi();
@@ -110,12 +111,15 @@ private:
     QWidget* createMacrosPage();
     QWidget* createAdvancedPage();
     QWidget* createDiagnosticsPage();
+    QWidget* createAboutPage();
 
     void loadConfigIntoUi();
     void applyConfigToUi(const Config& cfg);
     Config collectDraftFromUi() const;
     void updateDirtyState();
     void updateShortcutHint();
+    bool isDarkTheme() const;
+    void applyTheme();
     void refreshThemeIcons();
     void syncSystemdAutostart(bool enabled, bool runSystemctl);
     QDBusInterface* ensureDbus();
@@ -125,11 +129,14 @@ private:
     std::string configPath_;
     bool loadingUi_ = false;
     bool isDirty_ = false;
+    bool inApplyTheme_ = false;
     bool hasAppliedOnce_ = false;
     bool lastAutostartState_ = true;
     QDBusInterface* dbus_ = nullptr;
 
     QListWidget* navList_ = nullptr;
+    QLabel* versionLabel_ = nullptr;
+    QPushButton* checkUpdateBtn_ = nullptr;
     QStackedWidget* pagesStack_ = nullptr;
     QLabel* headerBadgeLabel_ = nullptr;
     bool headerBadgeIsVi_ = true;
@@ -192,6 +199,9 @@ private:
 
     // Page 6: Chẩn đoán
     QPlainTextEdit* diagnosticsOutputEdit_ = nullptr;
+
+    // Page 7: Giới thiệu
+    QLabel* aboutLogoLabel_ = nullptr;
 };
 
 } // namespace vnsnowkey

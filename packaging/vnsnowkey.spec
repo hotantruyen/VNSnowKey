@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vnsnowkey
-Version:        1.0.6
+Version:        2.0.0
 Release:        1
 Summary:        Vietnamese Input Method for Linux Wayland and X11
 
@@ -129,6 +129,13 @@ echo "       - KDE Plasma:    System Settings -> Keyboard -> Virtual Keyboard ->
 %{_datadir}/icons/hicolor/scalable/status/vnsnowkey-en-symbolic.svg
 
 %changelog
+* Sun Nov 22 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 2.0.0-1
+- Major Release 2.0.0:
+- Add dedicated About tab with version display, GitHub update checker, author and license information.
+- Overhaul system theme integration: dynamically adapt cards, sidebar, header bar, and icons to system Light and Dark themes via FreeDesktop Portal and window palette.
+- Restore default remember_per_app_lang=true and set default auto_restore_english=false.
+- Expand settings window geometry to 880x580 for comfortable multi-desktop display.
+
 * Sat Nov 21 2026 VNSnowKey Contributors <vnsnowkey@localhost> - 1.0.6-1
 - Fix browser URL/search inline autocomplete: replace selected suggestions with atomic KEY_DELETE before diff backspacing, eliminating 'd' -> 'dđ' and diacritic corruption.
 - Eliminate fast-typing Vietnamese lockout: auto-unlock word buffer when evolving into valid syllables (e.g. "truyền") without requiring space or full-word deletion.

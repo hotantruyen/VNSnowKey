@@ -253,7 +253,7 @@ void testQtWidgetsMultiLineEditorAndSettingsWindow(const std::string& tmpDir) {
     EXPECT_BOOL_EQ(win.windowTitle().contains(QStringLiteral("VNSnowKey")), true);
 
     QListWidget* navSidebar = win.findChild<QListWidget*>(QStringLiteral("navSidebar"));
-    EXPECT_BOOL_EQ(navSidebar != nullptr && navSidebar->count() == 6, true);
+    EXPECT_BOOL_EQ(navSidebar != nullptr && navSidebar->count() == 7, true);
     if (navSidebar) {
         for (int i = 0; i < navSidebar->count(); ++i) {
             QListWidgetItem* item = navSidebar->item(i);

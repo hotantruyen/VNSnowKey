@@ -1,4 +1,4 @@
-# Báo cáo Kiểm thử & Nghiệm thu VNSnowKey (`docs/TEST_REPORT.md`) - v1.0.6
+# Báo cáo Kiểm thử & Nghiệm thu VNSnowKey (`docs/TEST_REPORT.md`) - v2.0.0
 
 Báo cáo này ghi nhận các hạng mục đã được kiểm thử tự động trong dự án (bao gồm bản chạy với `AddressSanitizer` + `UndefinedBehaviorSanitizer` `-fsanitize=address,undefined -Wall -Wextra`) cùng danh sách kiểm tra thủ công cho desktop.
 

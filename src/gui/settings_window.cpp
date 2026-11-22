@@ -19,6 +19,7 @@
 #include <QCloseEvent>
 #include <QDBusConnection>
 #include <QDBusReply>
+#include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -30,13 +31,18 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
+#include <QMessageBox>
 #include <QPainter>
 #include <QProcess>
 #include <QSet>
+#include <QStyleHints>
 #include <QStyledItemDelegate>
 #include <QSvgRenderer>
 #include <QTextStream>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
@@ -46,7 +52,7 @@ namespace vnsnowkey {
 
 namespace {
 
-constexpr const char* kSidebarIconSvgs[6] = {
+constexpr const char* kSidebarIconSvgs[7] = {
     // 0: General & Typing (Keyboard)
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="CURRENT" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6.5 9.5h1M10 9.5h1M13.5 9.5h1M17 9.5h.5M7 14.5h10"/></svg>)SVG",
     // 1: Shortcuts (Command symbol)
@@ -58,7 +64,9 @@ constexpr const char* kSidebarIconSvgs[6] = {
     // 4: Advanced (Tuning sliders)
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="CURRENT" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle cx="8.5" cy="6.5" r="2" fill="CURRENT"/><circle cx="15.5" cy="12" r="2" fill="CURRENT"/><circle cx="10.5" cy="17.5" r="2" fill="CURRENT"/></svg>)SVG",
     // 5: Diagnostics (System Doctor shield + pulse)
-    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="CURRENT" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8L4.5 5.8v5.5c0 4.6 3.2 8.6 7.5 9.9 4.3-1.3 7.5-5.3 7.5-9.9V5.8L12 2.8z"/><path d="M7.5 12h2l1.4-2.8 1.9 5.4 1.4-2.6h2.3"/></svg>)SVG"
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="CURRENT" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8L4.5 5.8v5.5c0 4.6 3.2 8.6 7.5 9.9 4.3-1.3 7.5-5.3 7.5-9.9V5.8L12 2.8z"/><path d="M7.5 12h2l1.4-2.8 1.9 5.4 1.4-2.6h2.3"/></svg>)SVG",
+    // 6: About (Info circle)
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="CURRENT" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><line x1="12" y1="8" x2="12.01" y2="8"/><line x1="12" y1="11.5" x2="12" y2="16"/></svg>)SVG"
 };
 
 QPixmap renderSvgTinted(const char* svgTmpl, const QColor& color, int size) {
@@ -78,7 +86,7 @@ QPixmap renderSvgTinted(const char* svgTmpl, const QColor& color, int size) {
 
 QIcon buildThemedSidebarIcon(int index, const QColor& normalColor, const QColor& selectedColor) {
     QIcon icon;
-    if (index < 0 || index >= 6) return icon;
+    if (index < 0 || index >= 7) return icon;
     for (int sz : {18, 24, 32}) {
         const QPixmap norm = renderSvgTinted(kSidebarIconSvgs[index], normalColor, sz);
         const QPixmap sel = renderSvgTinted(kSidebarIconSvgs[index], selectedColor, sz);
@@ -388,11 +396,18 @@ SettingsWindow::SettingsWindow(QWidget* parent)
       baselineConfig_(Config::createDefault()),
       configPath_(Config::defaultConfigPath()) {
     setWindowTitle(QStringLiteral("VNSnowKey - Bộ gõ Tiếng Việt"));
-    resize(780, 540);
-    setMinimumSize(680, 460);
+    resize(880, 580);
+    setMinimumSize(780, 500);
     setWindowIcon(TrayController::buildAdaptiveMonochromeIcon(true));
 
     ensureDbus();
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+            this, [this](Qt::ColorScheme) {
+        applyTheme();
+    });
+#endif
 
     setupUi();
     loadConfigIntoUi();
@@ -402,6 +417,7 @@ SettingsWindow::SettingsWindow(QWidget* parent)
 void SettingsWindow::showAndRaise() {
     loadConfigIntoUi();
     onRefreshDiagnostics();
+    applyTheme();
     show();
     raise();
     activateWindow();
@@ -414,70 +430,82 @@ void SettingsWindow::closeEvent(QCloseEvent* event) {
 
 void SettingsWindow::changeEvent(QEvent* event) {
     QMainWindow::changeEvent(event);
-    if (event && (event->type() == QEvent::PaletteChange ||
-                  event->type() == QEvent::ApplicationPaletteChange ||
-                  event->type() == QEvent::StyleChange)) {
-        refreshThemeIcons();
+    if (event && !inApplyTheme_ && (event->type() == QEvent::PaletteChange ||
+                                    event->type() == QEvent::ApplicationPaletteChange ||
+                                    event->type() == QEvent::ThemeChange)) {
+        applyTheme();
     }
 }
 
-void SettingsWindow::refreshThemeIcons() {
-    const QColor normalFg = palette().color(QPalette::WindowText);
-    const QColor selectedFg = palette().color(QPalette::HighlightedText);
-    if (navList_) {
-        for (int i = 0; i < navList_->count() && i < 6; ++i) {
-            if (QListWidgetItem* item = navList_->item(i)) {
-                item->setIcon(buildThemedSidebarIcon(i, normalFg, selectedFg));
-            }
-        }
+bool SettingsWindow::isDarkTheme() const {
+    const QColor winBg = palette().color(QPalette::Window);
+    if (winBg.isValid() && winBg.alpha() > 0) {
+        return (winBg.lightness() < 128);
     }
-    if (headerBadgeLabel_) {
-        const bool isDarkWindow = (palette().color(QPalette::Window).lightness() < 128);
-        headerBadgeLabel_->setPixmap(
-            TrayController::buildAdaptiveMonochromeIcon(headerBadgeIsVi_, isDarkWindow, false)
-                .pixmap(20, 20));
-    }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    auto cs = QGuiApplication::styleHints()->colorScheme();
+    if (cs == Qt::ColorScheme::Dark) return true;
+    if (cs == Qt::ColorScheme::Light) return false;
+#endif
+    return false;
 }
 
-void SettingsWindow::updateDaemonLiveStatus(const QString& mode, const QString& inputMethod, bool safeMode) {
-    if (!headerStatusLabel_) return;
-    headerBadgeIsVi_ = (!safeMode && mode == QStringLiteral("vi"));
-    refreshThemeIcons();
-    if (safeMode) {
-        headerStatusLabel_->setText(
-            QStringLiteral("<b>Safe Mode (EN)</b> · %1").arg(inputMethod));
-        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Tiếp tục"));
-    } else if (mode == QStringLiteral("vi")) {
-        headerStatusLabel_->setText(
-            QStringLiteral("<b>Tiếng Việt (VI)</b> · %1").arg(inputMethod));
-        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Safe Mode"));
-    } else {
-        headerStatusLabel_->setText(
-            QStringLiteral("<b>Tiếng Anh (EN)</b> · %1").arg(inputMethod));
-        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Safe Mode"));
-    }
-}
+void SettingsWindow::applyTheme() {
+    if (inApplyTheme_) return;
+    inApplyTheme_ = true;
 
-void SettingsWindow::setupUi() {
-    // Palette-aware KDE Breeze styling that automatically adapts to Light & Dark themes
+    const bool dark = isDarkTheme();
+    const QColor highlight = palette().color(QPalette::Highlight);
+
+    // Dynamic, harmonized colors matching the desktop theme
+    const QString cardBg = dark ? QStringLiteral("rgba(255, 255, 255, 0.05)") : QStringLiteral("#ffffff");
+    const QString cardBorder = dark ? QStringLiteral("rgba(255, 255, 255, 0.12)") : QStringLiteral("rgba(0, 0, 0, 0.12)");
+    const QString headerBg = dark ? QStringLiteral("rgba(255, 255, 255, 0.07)") : QStringLiteral("#ffffff");
+    const QString sidebarBg = dark ? QStringLiteral("rgba(255, 255, 255, 0.04)") : QStringLiteral("#ffffff");
+    const QString sidebarHover = dark ? QStringLiteral("rgba(255, 255, 255, 0.08)") : QStringLiteral("rgba(0, 0, 0, 0.05)");
+    const QString titleColor = dark ? QStringLiteral("#fcfcfc") : QStringLiteral("#232629");
+    const QString subColor = dark ? QStringLiteral("#a1a9b1") : QStringLiteral("#5f6368");
+    const QString linkColor = highlight.isValid() ? highlight.name() : (dark ? QStringLiteral("#61aee9") : QStringLiteral("#1d99f3"));
+
     setStyleSheet(QStringLiteral(
+        "QMainWindow, QWidget#centralWidget {"
+        "  background: palette(window);"
+        "}"
         "QFrame#settingsCard {"
-        "  background: palette(base);"
-        "  border: 1px solid palette(mid);"
+        "  background: %1;"
+        "  border: 1px solid %2;"
         "  border-radius: 8px;"
         "}"
+        "QFrame#settingsCard QLabel {"
+        "  color: palette(window-text);"
+        "}"
         "QFrame#headerBar {"
-        "  background: palette(alternate-base);"
-        "  border: 1px solid palette(mid);"
+        "  background: %3;"
+        "  border: 1px solid %2;"
         "  border-radius: 8px;"
         "}"
         "QLabel#cardTitle {"
         "  font-weight: 600;"
-        "  color: palette(window-text);"
+        "  color: %4;"
+        "}"
+        "QLabel#heroTitle {"
+        "  font-size: 22px;"
+        "  font-weight: 700;"
+        "  color: %4;"
+        "  margin-top: 4px;"
+        "}"
+        "QLabel#heroSubtitle {"
+        "  font-size: 13px;"
+        "  color: %5;"
+        "  margin-bottom: 2px;"
+        "}"
+        "QLabel a {"
+        "  color: %6;"
+        "  text-decoration: underline;"
         "}"
         "QListWidget#navSidebar {"
-        "  background: palette(base);"
-        "  border: 1px solid palette(mid);"
+        "  background: %7;"
+        "  border: 1px solid %2;"
         "  border-radius: 8px;"
         "  padding: 4px;"
         "  outline: 0;"
@@ -486,6 +514,10 @@ void SettingsWindow::setupUi() {
         "  padding: 7px 10px;"
         "  border-radius: 6px;"
         "  margin: 1px 0px;"
+        "  color: palette(window-text);"
+        "}"
+        "QListWidget#navSidebar::item:hover {"
+        "  background: %8;"
         "}"
         "QListWidget#navSidebar::item:selected {"
         "  background: palette(highlight);"
@@ -506,7 +538,73 @@ void SettingsWindow::setupUi() {
         "  border: 1px solid palette(mid);"
         "  font-weight: 400;"
         "}"
-    ));
+    ).arg(cardBg, cardBorder, headerBg, titleColor, subColor, linkColor, sidebarBg, sidebarHover));
+
+    refreshThemeIcons();
+    inApplyTheme_ = false;
+}
+
+void SettingsWindow::refreshThemeIcons() {
+    const bool dark = isDarkTheme();
+    const QColor normalIconColor = dark ? QColor(240, 240, 244) : QColor(35, 38, 41);
+    const QColor selectedIconColor = palette().color(QPalette::HighlightedText);
+
+    if (navList_) {
+        for (int i = 0; i < navList_->count() && i < 7; ++i) {
+            if (QListWidgetItem* item = navList_->item(i)) {
+                item->setIcon(buildThemedSidebarIcon(i, normalIconColor, selectedIconColor));
+            }
+        }
+    }
+    if (headerBadgeLabel_) {
+        headerBadgeLabel_->setPixmap(
+            TrayController::buildAdaptiveMonochromeIcon(headerBadgeIsVi_, dark, false)
+                .pixmap(20, 20));
+    }
+    if (aboutLogoLabel_) {
+        const QString mainSvg = TrayController::locateIconAsset(QStringLiteral("vnsnowkey.svg"));
+        bool rendered = false;
+        if (!mainSvg.isEmpty()) {
+            QSvgRenderer renderer(mainSvg);
+            if (renderer.isValid()) {
+                QPixmap px(72, 72);
+                px.fill(Qt::transparent);
+                QPainter p(&px);
+                p.setRenderHint(QPainter::Antialiasing, true);
+                renderer.render(&p, QRectF(0, 0, 72, 72));
+                p.end();
+                aboutLogoLabel_->setPixmap(px);
+                rendered = true;
+            }
+        }
+        if (!rendered) {
+            aboutLogoLabel_->setPixmap(
+                TrayController::buildAdaptiveMonochromeIcon(true, dark, false).pixmap(64, 64));
+        }
+    }
+}
+
+void SettingsWindow::updateDaemonLiveStatus(const QString& mode, const QString& inputMethod, bool safeMode) {
+    if (!headerStatusLabel_) return;
+    headerBadgeIsVi_ = (!safeMode && mode == QStringLiteral("vi"));
+    refreshThemeIcons();
+    if (safeMode) {
+        headerStatusLabel_->setText(
+            QStringLiteral("<b>Chế độ an toàn (EN)</b> · %1").arg(inputMethod));
+        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Tiếp tục"));
+    } else if (mode == QStringLiteral("vi")) {
+        headerStatusLabel_->setText(
+            QStringLiteral("<b>Tiếng Việt (VI)</b> · %1").arg(inputMethod));
+        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Chế độ an toàn"));
+    } else {
+        headerStatusLabel_->setText(
+            QStringLiteral("<b>Tiếng Anh (EN)</b> · %1").arg(inputMethod));
+        if (headerPanicBtn_) headerPanicBtn_->setText(QStringLiteral("Chế độ an toàn"));
+    }
+}
+
+void SettingsWindow::setupUi() {
+    applyTheme();
 
     auto* central = new QWidget(this);
     setCentralWidget(central);
@@ -523,8 +621,8 @@ void SettingsWindow::setupUi() {
 
     headerBadgeLabel_ = new QLabel(topBar);
     headerStatusLabel_ = new QLabel(QStringLiteral("Đang kiểm tra daemon..."), topBar);
-    headerToggleBtn_ = new QPushButton(QStringLiteral("Đổi VI / EN"), topBar);
-    headerPanicBtn_ = new QPushButton(QStringLiteral("Safe Mode"), topBar);
+    headerToggleBtn_ = new QPushButton(QStringLiteral("Chuyển VI / EN"), topBar);
+    headerPanicBtn_ = new QPushButton(QStringLiteral("Chế độ an toàn"), topBar);
     connect(headerToggleBtn_, &QPushButton::clicked, this, &SettingsWindow::onToggleDaemonModeClicked);
     connect(headerPanicBtn_, &QPushButton::clicked, this, &SettingsWindow::onPanicOrResumeClicked);
 
@@ -556,6 +654,7 @@ void SettingsWindow::setupUi() {
         {"Macro & Mã chữ",  createMacrosPage()},
         {"Nâng cao",        createAdvancedPage()},
         {"Chẩn đoán",       createDiagnosticsPage()},
+        {"Giới thiệu",       createAboutPage()},
     };
 
     for (const auto& p : pages) {
@@ -614,7 +713,7 @@ QWidget* SettingsWindow::createGeneralAndTypingPage() {
     genChecksRow->addStretch();
     genForm->addRow(QString(), genChecksRow);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Hoạt động chung"), genForm));
+    layout->addWidget(makeCard(page, QStringLiteral("Cài đặt chung"), genForm));
 
     // Card 2: Vietnamese Typing Engine
     auto* imBox = new QVBoxLayout();
@@ -669,12 +768,12 @@ QWidget* SettingsWindow::createGeneralAndTypingPage() {
     auto* optsGrid = new QGridLayout();
     optsGrid->setHorizontalSpacing(12);
     optsGrid->setVerticalSpacing(4);
-    modernToneCheck_ = new QCheckBox(QStringLiteral("Đặt dấu kiểu mới (oà, uý)"), page);
-    freeToneCheck_ = new QCheckBox(QStringLiteral("Gõ dấu tự do ở cuối từ"), page);
+    modernToneCheck_ = new QCheckBox(QStringLiteral("Đặt dấu kiểu mới (hòa, thủy)"), page);
+    freeToneCheck_ = new QCheckBox(QStringLiteral("Đặt dấu tự do (bỏ dấu ở cuối từ)"), page);
     spellCheck_ = new QCheckBox(QStringLiteral("Kiểm tra chính tả"), page);
-    autoRestoreCheck_ = new QCheckBox(QStringLiteral("Tự trả từ tiếng Anh"), page);
-    shorthandInitCheck_ = new QCheckBox(QStringLiteral("Tắt phụ âm đầu (cc→ch...)"), page);
-    shorthandFinalCheck_ = new QCheckBox(QStringLiteral("Tắt phụ âm cuối (gg→ng...)"), page);
+    autoRestoreCheck_ = new QCheckBox(QStringLiteral("Tự động khôi phục từ tiếng Anh (khi gõ sai)"), page);
+    shorthandInitCheck_ = new QCheckBox(QStringLiteral("Gõ tắt phụ âm đầu (cc→ch, gg→ng...)"), page);
+    shorthandFinalCheck_ = new QCheckBox(QStringLiteral("Gõ tắt phụ âm cuối (g→ng, h→nh...)"), page);
 
     optsGrid->addWidget(modernToneCheck_, 0, 0);
     optsGrid->addWidget(freeToneCheck_, 0, 1);
@@ -684,7 +783,7 @@ QWidget* SettingsWindow::createGeneralAndTypingPage() {
     optsGrid->addWidget(shorthandFinalCheck_, 2, 1);
     imBox->addLayout(optsGrid);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Bộ gõ tiếng Việt (BambooEngine)"), imBox));
+    layout->addWidget(makeCard(page, QStringLiteral("Tùy chọn kiểu gõ tiếng Việt"), imBox));
 
     // Card 3: Inline quick test
     auto* testRow = new QHBoxLayout();
@@ -728,7 +827,7 @@ QWidget* SettingsWindow::createGeneralAndTypingPage() {
     testRow->addWidget(liveTestRawEdit_, 1);
     testRow->addWidget(new QLabel(QStringLiteral("→"), page));
     testRow->addWidget(liveTestOutputEdit_, 1);
-    layout->addWidget(makeCard(page, QStringLiteral("Thử nhanh bộ gõ"), testRow));
+    layout->addWidget(makeCard(page, QStringLiteral("Khung gõ thử nghiệm"), testRow));
 
     layout->addStretch();
 
@@ -769,18 +868,18 @@ QWidget* SettingsWindow::createShortcutsPage() {
     scRestoreWord_ = new HotkeyCaptureWidget(QStringLiteral("Tuỳ chọn (VD: Esc)"), page);
     scPanicSafeMode_ = new HotkeyCaptureWidget(QStringLiteral("VD: Ctrl+Alt+Pause"), page);
 
-    form->addRow(QStringLiteral("Đổi VI ↔ EN (chính):"), scTogglePrimary_);
-    form->addRow(QStringLiteral("Đổi VI ↔ EN (phụ 1):"), scToggleSecondary_);
-    form->addRow(QStringLiteral("Đổi VI ↔ EN (phụ 2):"), scToggleExtra_);
-    form->addRow(QStringLiteral("Khôi phục từ gốc:"), scRestoreWord_);
-    form->addRow(QStringLiteral("Tạm dừng khẩn cấp:"), scPanicSafeMode_);
+    form->addRow(QStringLiteral("Chuyển đổi VI ↔ EN (chính):"), scTogglePrimary_);
+    form->addRow(QStringLiteral("Chuyển đổi VI ↔ EN (phụ 1):"), scToggleSecondary_);
+    form->addRow(QStringLiteral("Chuyển đổi VI ↔ EN (phụ 2):"), scToggleExtra_);
+    form->addRow(QStringLiteral("Phục hồi từ tiếng Anh gốc (Undo từ):"), scRestoreWord_);
+    form->addRow(QStringLiteral("Chế độ an toàn / Tạm dừng (Safe Mode):"), scPanicSafeMode_);
     box->addLayout(form);
 
     shortcutHintLabel_ = new QLabel(page);
     shortcutHintLabel_->setWordWrap(true);
     box->addWidget(shortcutHintLabel_);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Phím tắt toàn cục (bắt trực tiếp từ evdev)"), box));
+    layout->addWidget(makeCard(page, QStringLiteral("Phím tắt toàn hệ thống"), box));
 
     auto* cliLabel = new QLabel(
         QStringLiteral("Phím tắt hệ thống / Script: <code>vnsnowkey ctl toggle | vi | en | status | reload</code>"),
@@ -805,12 +904,13 @@ QWidget* SettingsWindow::createAppsPage() {
     layout->setSpacing(8);
 
     auto* optsRow = new QHBoxLayout();
-    rememberPerAppCheck_ = new QCheckBox(QStringLiteral("Ghi nhớ EN/VI theo từng cửa sổ"), page);
-    disableInPasswordCheck_ = new QCheckBox(QStringLiteral("Tự tắt ở ô mật khẩu"), page);
+    rememberPerAppCheck_ = new QCheckBox(QStringLiteral("Ghi nhớ chế độ gõ riêng cho từng ứng dụng (Tắt: Đồng bộ chung)"), page);
+    rememberPerAppCheck_->setToolTip(QStringLiteral("Khi bật (mặc định): Mỗi ứng dụng (trình duyệt, terminal, soạn thảo...) ghi nhớ riêng chế độ Tiếng Việt hoặc Tiếng Anh.\nKhi tắt: Chuyển đổi ngôn ngữ sẽ đồng bộ chung trên toàn bộ các ứng dụng."));
+    disableInPasswordCheck_ = new QCheckBox(QStringLiteral("Tự động tắt tiếng Việt khi nhập mật khẩu"), page);
     optsRow->addWidget(rememberPerAppCheck_);
     optsRow->addWidget(disableInPasswordCheck_);
     optsRow->addStretch();
-    layout->addWidget(makeCard(page, QStringLiteral("Ngữ cảnh cửa sổ"), optsRow));
+    layout->addWidget(makeCard(page, QStringLiteral("Quy tắc chuyển đổi ngôn ngữ"), optsRow));
 
     auto* tblBox = new QVBoxLayout();
     tblBox->setSpacing(6);
@@ -840,8 +940,8 @@ QWidget* SettingsWindow::createAppsPage() {
     appProfilesTable_ = new QTableWidget(0, 5, page);
     appProfilesTable_->setObjectName(QStringLiteral("appProfilesTable"));
     appProfilesTable_->setHorizontalHeaderLabels(
-        {QStringLiteral("App Class"), QStringLiteral("Chế độ"), QStringLiteral("Output"),
-         QStringLiteral("Delay (µs)"), QStringLiteral("Sửa URL")});
+        {QStringLiteral("Tên ứng dụng (App Class)"), QStringLiteral("Chế độ gõ"), QStringLiteral("Kiểu xuất phím"),
+         QStringLiteral("Độ trễ (µs)"), QStringLiteral("Sửa gợi ý URL")});
     appProfilesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     appProfilesTable_->setItemDelegateForColumn(1, new AppModeDelegate(appProfilesTable_));
     appProfilesTable_->setAlternatingRowColors(true);
@@ -855,7 +955,7 @@ QWidget* SettingsWindow::createAppsPage() {
     modeHint->setObjectName(QStringLiteral("HintLabel"));
     tblBox->addWidget(modeHint);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Profile & Loại trừ từng ứng dụng"), tblBox), 1);
+    layout->addWidget(makeCard(page, QStringLiteral("Cấu hình riêng cho từng ứng dụng"), tblBox), 1);
 
     connect(rememberPerAppCheck_, &QCheckBox::toggled, this, &SettingsWindow::onUiValueChanged);
     connect(disableInPasswordCheck_, &QCheckBox::toggled, this, &SettingsWindow::onUiValueChanged);
@@ -873,8 +973,8 @@ QWidget* SettingsWindow::createMacrosPage() {
     macroBox->setSpacing(6);
 
     auto* topRow = new QHBoxLayout();
-    macroEnabledCheck_ = new QCheckBox(QStringLiteral("Bật gõ tắt"), page);
-    macroAutoCapCheck_ = new QCheckBox(QStringLiteral("Tự viết hoa"), page);
+    macroEnabledCheck_ = new QCheckBox(QStringLiteral("Bật tính năng gõ tắt"), page);
+    macroAutoCapCheck_ = new QCheckBox(QStringLiteral("Tự viết hoa theo từ gõ tắt"), page);
     auto* addMacroBtn = new QPushButton(QStringLiteral("+ Thêm"), page);
     auto* delMacroBtn = new QPushButton(QStringLiteral("− Xoá"), page);
     auto* importMacroBtn = new QPushButton(QStringLiteral("Nhập..."), page);
@@ -900,7 +1000,7 @@ QWidget* SettingsWindow::createMacrosPage() {
     macrosTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     macroBox->addWidget(macrosTable_, 1);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Bảng gõ tắt (Macro)"), macroBox), 1);
+    layout->addWidget(makeCard(page, QStringLiteral("Bảng gõ tắt"), macroBox), 1);
 
     auto* convBox = new QVBoxLayout();
     convBox->setSpacing(6);
@@ -915,8 +1015,8 @@ QWidget* SettingsWindow::createMacrosPage() {
     convToCharsetCombo_->addItem(QStringLiteral("Bỏ dấu (ASCII)"), QStringLiteral("ASCII"));
     convFromCharsetCombo_->setCurrentIndex(1);
 
-    auto* convSampleBtn = new QPushButton(QStringLiteral("Chuyển thử"), page);
-    auto* convClipboardBtn = new QPushButton(QStringLiteral("Chuyển Clipboard"), page);
+    auto* convSampleBtn = new QPushButton(QStringLiteral("Chuyển đổi văn bản mẫu"), page);
+    auto* convClipboardBtn = new QPushButton(QStringLiteral("Chuyển đổi Clipboard"), page);
     connect(convSampleBtn, &QPushButton::clicked, this, &SettingsWindow::onConvertTextSample);
     connect(convClipboardBtn, &QPushButton::clicked, this, &SettingsWindow::onConvertClipboardNow);
 
@@ -940,7 +1040,7 @@ QWidget* SettingsWindow::createMacrosPage() {
     textRow->addWidget(convResultEdit_, 1);
     convBox->addLayout(textRow);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Công cụ chuyển bảng mã"), convBox));
+    layout->addWidget(makeCard(page, QStringLiteral("Chuyển đổi bảng mã & Bỏ dấu"), convBox));
 
     connect(macroEnabledCheck_, &QCheckBox::toggled, this, &SettingsWindow::onUiValueChanged);
     connect(macroAutoCapCheck_, &QCheckBox::toggled, this, &SettingsWindow::onUiValueChanged);
@@ -959,50 +1059,59 @@ QWidget* SettingsWindow::createAdvancedPage() {
     outForm->setVerticalSpacing(6);
 
     outputMethodCombo_ = new QComboBox(page);
-    outputMethodCombo_->addItem(QStringLiteral("XKB 8-Level Keymap (khuyên dùng)"), QStringLiteral("xkb_keymap"));
-    outputMethodCombo_->addItem(QStringLiteral("Clipboard + Ctrl+V"), QStringLiteral("clipboard_ctrl_v"));
-    outputMethodCombo_->addItem(QStringLiteral("Clipboard + Ctrl+Shift+V"), QStringLiteral("clipboard_ctrl_shift_v"));
-    outputMethodCombo_->addItem(QStringLiteral("Ctrl+Shift+U + Hex"), QStringLiteral("ctrl_shift_u"));
-    outForm->addRow(QStringLiteral("Xuất Unicode:"), outputMethodCombo_);
+    outputMethodCombo_->addItem(QStringLiteral("XKB Keymap 8-Level (Mặc định, nhanh & mượt nhất)"), QStringLiteral("xkb_keymap"));
+    outputMethodCombo_->addItem(QStringLiteral("Khay nhớ tạm (Clipboard + Ctrl+V)"), QStringLiteral("clipboard_ctrl_v"));
+    outputMethodCombo_->addItem(QStringLiteral("Khay nhớ tạm (Clipboard + Ctrl+Shift+V)"), QStringLiteral("clipboard_ctrl_shift_v"));
+    outputMethodCombo_->addItem(QStringLiteral("Mã Hex Unicode (Ctrl+Shift+U)"), QStringLiteral("ctrl_shift_u"));
+    outForm->addRow(QStringLiteral("Phương thức xuất ký tự:"), outputMethodCombo_);
 
-    auto* timingRow = new QHBoxLayout();
+    auto* delayRow = new QHBoxLayout();
     defaultDelaySpin_ = new QSpinBox(page);
     defaultDelaySpin_->setRange(0, 20000);
     defaultDelaySpin_->setSuffix(QStringLiteral(" µs"));
+    defaultDelaySpin_->setFixedWidth(110);
     clipboardRestoreSpin_ = new QSpinBox(page);
     clipboardRestoreSpin_->setRange(20, 2000);
     clipboardRestoreSpin_->setSuffix(QStringLiteral(" ms"));
+    clipboardRestoreSpin_->setFixedWidth(110);
+    delayRow->addWidget(defaultDelaySpin_);
+    delayRow->addSpacing(16);
+    delayRow->addWidget(new QLabel(QStringLiteral("Độ trễ khay nhớ tạm:"), page));
+    delayRow->addWidget(clipboardRestoreSpin_);
+    delayRow->addStretch();
+    outForm->addRow(QStringLiteral("Độ trễ gửi phím:"), delayRow);
+
     bufferTimeoutSpin_ = new QSpinBox(page);
     bufferTimeoutSpin_->setRange(500, 60000);
     bufferTimeoutSpin_->setSingleStep(500);
     bufferTimeoutSpin_->setSuffix(QStringLiteral(" ms"));
-    timingRow->addWidget(new QLabel(QStringLiteral("Delay:"), page));
-    timingRow->addWidget(defaultDelaySpin_);
-    timingRow->addWidget(new QLabel(QStringLiteral("Clipboard:"), page));
-    timingRow->addWidget(clipboardRestoreSpin_);
-    timingRow->addWidget(new QLabel(QStringLiteral("Hết hạn từ:"), page));
-    timingRow->addWidget(bufferTimeoutSpin_);
-    outForm->addRow(QStringLiteral("Độ trễ / Bộ đệm:"), timingRow);
+    bufferTimeoutSpin_->setFixedWidth(110);
+    auto* timeoutRow = new QHBoxLayout();
+    timeoutRow->addWidget(bufferTimeoutSpin_);
+    timeoutRow->addStretch();
+    outForm->addRow(QStringLiteral("Thời gian xóa bộ đệm:"), timeoutRow);
 
-    resetMouseClickCheck_ = new QCheckBox(QStringLiteral("Reset khi click chuột"), page);
-    resetFocusChangeCheck_ = new QCheckBox(QStringLiteral("Reset khi đổi cửa sổ"), page);
+    resetMouseClickCheck_ = new QCheckBox(QStringLiteral("Xóa bộ đệm khi nhấp chuột"), page);
+    resetFocusChangeCheck_ = new QCheckBox(QStringLiteral("Xóa bộ đệm khi đổi cửa sổ"), page);
     resetNavKeysCheck_ = new QCheckBox(
-        QStringLiteral("Reset ở phím điều hướng (↑ ↓ Home End PageUp/Down; Enter/Tab/Esc luôn ngắt từ, ← → giữ buffer)"),
+        QStringLiteral("Xóa bộ đệm ở phím điều hướng (↑ ↓ Home End PageUp/Down; ← → giữ từ)"),
         page);
+    resetNavKeysCheck_->setToolTip(
+        QStringLiteral("Enter, Tab, Esc luôn ngắt từ; các phím mũi tên trái/phải cho phép di chuyển con trỏ trong từ."));
     auto* rstRow = new QHBoxLayout();
     rstRow->addWidget(resetMouseClickCheck_);
     rstRow->addWidget(resetFocusChangeCheck_);
     rstRow->addStretch();
-    outForm->addRow(QStringLiteral("Ngắt từ:"), rstRow);
+    outForm->addRow(QStringLiteral("Quy tắc xóa bộ đệm:"), rstRow);
     outForm->addRow(QString(), resetNavKeysCheck_);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Cơ chế xuất phím & Đồng bộ buffer"), outForm));
+    layout->addWidget(makeCard(page, QStringLiteral("Cơ chế xuất phím & Quản lý bộ đệm"), outForm));
 
     auto* privBox = new QVBoxLayout();
     privBox->setSpacing(6);
     auto* privChecks = new QHBoxLayout();
-    typingStatsCheck_ = new QCheckBox(QStringLiteral("Thống kê số từ trong RAM (không lưu đĩa)"), page);
-    debugRedactedCheck_ = new QCheckBox(QStringLiteral("Debug log che nội dung gõ"), page);
+    typingStatsCheck_ = new QCheckBox(QStringLiteral("Thống kê số từ đã gõ (chỉ lưu trong RAM)"), page);
+    debugRedactedCheck_ = new QCheckBox(QStringLiteral("Ẩn nội dung gõ trong nhật ký gỡ lỗi (Bảo vệ riêng tư)"), page);
     privChecks->addWidget(typingStatsCheck_);
     privChecks->addWidget(debugRedactedCheck_);
     privChecks->addStretch();
@@ -1021,7 +1130,7 @@ QWidget* SettingsWindow::createAdvancedPage() {
     backupRow->addStretch();
     privBox->addLayout(backupRow);
 
-    layout->addWidget(makeCard(page, QStringLiteral("Quyền riêng tư & Sao lưu"), privBox));
+    layout->addWidget(makeCard(page, QStringLiteral("Quyền riêng tư & Sao lưu cấu hình"), privBox));
     layout->addStretch();
 
     connect(outputMethodCombo_, &QComboBox::currentIndexChanged, this, &SettingsWindow::onUiValueChanged);
@@ -1049,7 +1158,7 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addWidget(diagnosticsOutputEdit_, 1);
 
     auto* botRow = new QHBoxLayout();
-    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v1.0.6</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
+    auto* verLbl = new QLabel(QStringLiteral("<b>VNSnowKey v2.0.0</b> (GPLv3) · Engine: BambooEngine Core (MIT)"), page);
     auto* refreshDiagBtn = new QPushButton(QStringLiteral("Kiểm tra lại"), page);
     connect(refreshDiagBtn, &QPushButton::clicked, this, &SettingsWindow::onRefreshDiagnostics);
     botRow->addWidget(verLbl, 1);
@@ -1057,6 +1166,85 @@ QWidget* SettingsWindow::createDiagnosticsPage() {
     diagBox->addLayout(botRow);
 
     layout->addWidget(makeCard(page, QStringLiteral("System Doctor — Quyền evdev / uinput & Daemon"), diagBox), 1);
+    return page;
+}
+
+QWidget* SettingsWindow::createAboutPage() {
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(10);
+
+    // Hero Card: Logo + Name + Description
+    auto* heroCard = new QFrame(page);
+    heroCard->setObjectName(QStringLiteral("settingsCard"));
+    auto* heroLayout = new QVBoxLayout(heroCard);
+    heroLayout->setContentsMargins(16, 18, 16, 18);
+    heroLayout->setSpacing(6);
+    heroLayout->setAlignment(Qt::AlignCenter);
+
+    aboutLogoLabel_ = new QLabel(heroCard);
+    aboutLogoLabel_->setAlignment(Qt::AlignCenter);
+    heroLayout->addWidget(aboutLogoLabel_);
+
+    auto* appTitle = new QLabel(QStringLiteral("VNSnowKey"), heroCard);
+    appTitle->setObjectName(QStringLiteral("heroTitle"));
+    appTitle->setAlignment(Qt::AlignCenter);
+    heroLayout->addWidget(appTitle);
+
+    auto* appSub = new QLabel(QStringLiteral("Bộ gõ tiếng Việt cho Linux (Wayland & X11)"), heroCard);
+    appSub->setObjectName(QStringLiteral("heroSubtitle"));
+    appSub->setAlignment(Qt::AlignCenter);
+    heroLayout->addWidget(appSub);
+
+    layout->addWidget(heroCard);
+
+    // Card 1: Cập nhật phần mềm
+    auto* updateBox = new QVBoxLayout();
+    updateBox->setSpacing(8);
+
+    auto* updateRow = new QHBoxLayout();
+    versionLabel_ = new QLabel(QStringLiteral("<b>Phiên bản hiện tại:</b> v2.0.0"), page);
+    checkUpdateBtn_ = new QPushButton(QStringLiteral("Kiểm tra bản cập nhật mới"), page);
+    checkUpdateBtn_->setCursor(Qt::PointingHandCursor);
+    connect(checkUpdateBtn_, &QPushButton::clicked, this, &SettingsWindow::onCheckUpdateClicked);
+
+    updateRow->addWidget(versionLabel_, 1);
+    updateRow->addWidget(checkUpdateBtn_);
+    updateBox->addLayout(updateRow);
+
+    auto* releaseLink = new QLabel(QStringLiteral("Xem tất cả các bản phát hành trên <a href='https://github.com/hotantruyen/VNSnowKey/releases'>GitHub Releases</a>"), page);
+    releaseLink->setOpenExternalLinks(true);
+    updateBox->addWidget(releaseLink);
+
+    layout->addWidget(makeCard(page, QStringLiteral("Cập nhật phần mềm"), updateBox));
+
+    // Card 2: Thông tin & Giấy phép
+    auto* infoBox = new QVBoxLayout();
+    infoBox->setSpacing(6);
+
+    auto* infoText = new QLabel(
+        QStringLiteral("<b>Nhà phát triển:</b> Hồ Tấn Truyền<br>"
+                       "<b>Giấy phép:</b> GNU General Public License v3 (GPL-3.0-or-later)<br>"
+                       "<b>Bộ xử lý âm tiết:</b> BambooEngine Core (C++20 port, MIT / GPLv3)<br>"
+                       "<b>Kho mã nguồn:</b> <a href='https://github.com/hotantruyen/VNSnowKey'>https://github.com/hotantruyen/VNSnowKey</a>"),
+        page);
+    infoText->setOpenExternalLinks(true);
+    infoText->setWordWrap(true);
+    infoBox->addWidget(infoText);
+
+    auto* ghBtn = new QPushButton(QStringLiteral("Mở trang GitHub Repository"), page);
+    connect(ghBtn, &QPushButton::clicked, this, []() {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/hotantruyen/VNSnowKey")));
+    });
+    auto* btnRow = new QHBoxLayout();
+    btnRow->addStretch();
+    btnRow->addWidget(ghBtn);
+    infoBox->addLayout(btnRow);
+
+    layout->addWidget(makeCard(page, QStringLiteral("Thông tin & Giấy phép"), infoBox));
+    layout->addStretch();
+
     return page;
 }
 
@@ -1554,6 +1742,89 @@ void SettingsWindow::onRefreshDiagnostics() {
     if (diagnosticsOutputEdit_) {
         diagnosticsOutputEdit_->setPlainText(report);
     }
+}
+
+void SettingsWindow::onCheckUpdateClicked() {
+    if (!checkUpdateBtn_) return;
+    checkUpdateBtn_->setEnabled(false);
+    checkUpdateBtn_->setText(QStringLiteral("Đang kiểm tra..."));
+
+    auto* proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        if (checkUpdateBtn_) {
+            checkUpdateBtn_->setEnabled(true);
+            checkUpdateBtn_->setText(QStringLiteral("Kiểm tra cập nhật"));
+        }
+        QByteArray output = proc->readAllStandardOutput();
+        proc->deleteLater();
+
+        if (exitCode != 0 || output.isEmpty()) {
+            QMessageBox::warning(
+                this,
+                QStringLiteral("Kiểm tra cập nhật"),
+                QStringLiteral("Không thể kết nối đến máy chủ cập nhật.\nVui lòng kiểm tra kết nối mạng của bạn."));
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(output);
+        if (!doc.isObject()) {
+            QMessageBox::warning(
+                this,
+                QStringLiteral("Kiểm tra cập nhật"),
+                QStringLiteral("Dữ liệu cập nhật nhận được từ máy chủ không hợp lệ."));
+            return;
+        }
+
+        QJsonObject obj = doc.object();
+        QString latestTag = obj.value(QStringLiteral("tag_name")).toString().trimmed();
+        QString htmlUrl = obj.value(QStringLiteral("html_url")).toString().trimmed();
+        QString currentVer = QStringLiteral("2.0.0");
+
+        if (latestTag.isEmpty()) {
+            QMessageBox::information(
+                this,
+                QStringLiteral("Kiểm tra cập nhật"),
+                QStringLiteral("Bạn đang sử dụng phiên bản mới nhất (v%1).").arg(currentVer));
+            return;
+        }
+
+        auto parseVer = [](QString s) -> std::tuple<int, int, int> {
+            if (s.startsWith('v') || s.startsWith('V')) s.remove(0, 1);
+            QStringList parts = s.split('.');
+            int maj = parts.value(0).toInt();
+            int min = parts.value(1).toInt();
+            int pat = parts.value(2).toInt();
+            return {maj, min, pat};
+        };
+
+        if (parseVer(latestTag) > parseVer(currentVer)) {
+            QMessageBox box(this);
+            box.setWindowTitle(QStringLiteral("Kiểm tra cập nhật"));
+            box.setIcon(QMessageBox::Information);
+            box.setText(QStringLiteral("<b>Đã có bản cập nhật mới: %1</b> (Phiên bản hiện tại: v%2)").arg(latestTag, currentVer));
+            box.setInformativeText(QStringLiteral("Bạn có muốn mở trang GitHub để tải về bản phát hành mới nhất không?"));
+            auto* openBtn = box.addButton(QStringLiteral("Tải về trên GitHub"), QMessageBox::AcceptRole);
+            box.addButton(QStringLiteral("Để sau"), QMessageBox::RejectRole);
+            box.exec();
+            if (box.clickedButton() == openBtn) {
+                QString target = htmlUrl.isEmpty() ? QStringLiteral("https://github.com/hotantruyen/VNSnowKey/releases") : htmlUrl;
+                QDesktopServices::openUrl(QUrl(target));
+            }
+        } else {
+            QMessageBox::information(
+                this,
+                QStringLiteral("Kiểm tra cập nhật"),
+                QStringLiteral("Bạn đang sử dụng phiên bản mới nhất (v%1).").arg(currentVer));
+        }
+    });
+
+    proc->start(QStringLiteral("curl"),
+                {QStringLiteral("-s"),
+                 QStringLiteral("-m"), QStringLiteral("7"),
+                 QStringLiteral("-H"), QStringLiteral("Accept: application/vnd.github.v3+json"),
+                 QStringLiteral("-H"), QStringLiteral("User-Agent: VNSnowKey-Updater"),
+                 QStringLiteral("https://api.github.com/repos/hotantruyen/VNSnowKey/releases/latest")});
 }
 
 } // namespace vnsnowkey

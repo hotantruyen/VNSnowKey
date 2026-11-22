@@ -1,3 +1,13 @@
+vnsnowkey (2.0.0) unstable; urgency=medium
+
+  * Major Release 2.0.0:
+  * Add dedicated "Giới thiệu" (About) settings tab with version display, update checker querying GitHub Releases API, author information, and repository links.
+  * Overhaul system theme integration: dynamically adapt cards, sidebar, header bar, and icons to system Light and Dark themes via FreeDesktop Portal (QStyleHints::colorScheme) and window palette.
+  * Restore default remember_per_app_lang=true and set default auto_restore_english=false.
+  * Expand settings window geometry to 880x580 (min 780x500) for comfortable display across all desktop environments.
+
+ -- VNSnowKey Contributors <vnsnowkey@localhost>  Sun, 22 Nov 2026 14:25:00 +0700
+
 vnsnowkey (1.0.6) unstable; urgency=medium
 
   * Fix browser URL and search bar inline autocomplete: replace selected suggestions with atomic KEY_DELETE before diff backspacing, eliminating 'd' -> 'dđ' and diacritic corruption.

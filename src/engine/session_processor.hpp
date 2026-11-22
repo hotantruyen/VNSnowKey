@@ -25,7 +25,7 @@ struct SessionOptions {
     bool freeToneMarking = true;
     bool modernToneStyle = true;          // true: hoà, thuỷ; false: hòa, thủy
     bool spellCheckEnabled = true;
-    bool autoRestoreEnglish = true;       // restore "windows", "search", etc.
+    bool autoRestoreEnglish = false;      // restore "windows", "search", etc.
     bool shorthandInitialConsonant = false; // cc->ch, gg->gi, kk->kh, nn->ng, qq->qu, pp->ph, tt->th
     bool shorthandFinalConsonant = false;   // g->ng, h->nh, k->ch
     bool macroEnabled = true;

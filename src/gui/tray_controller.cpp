@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <QPalette>
+#include <QStyleHints>
 #include <QSvgRenderer>
 
 namespace vnsnowkey {
@@ -125,8 +126,20 @@ QIcon TrayController::buildAdaptiveMonochromeIcon(bool isVietnamese, bool forceD
             // GNOME Shell top panel is dark regardless of application light/dark theme.
             isDark = true;
         } else {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+            auto cs = QGuiApplication::styleHints()->colorScheme();
+            if (cs == Qt::ColorScheme::Dark) {
+                isDark = true;
+            } else if (cs == Qt::ColorScheme::Light) {
+                isDark = false;
+            } else {
+                const QColor winBg = qApp->palette().color(QPalette::Window);
+                isDark = (winBg.lightness() < 128);
+            }
+#else
             const QColor winBg = qApp->palette().color(QPalette::Window);
             isDark = (winBg.lightness() < 128);
+#endif
         }
     }
 
@@ -258,7 +271,7 @@ void TrayController::setupMenu() {
     QAction* openSettingsAct = menu->addAction(QStringLiteral("Cài đặt VNSnowKey..."));
     connect(openSettingsAct, &QAction::triggered, this, &TrayController::onOpenSettings);
 
-    safeModeAction_ = menu->addAction(QStringLiteral("Tạm dừng / Chế độ an toàn (Safe Mode)"));
+    safeModeAction_ = menu->addAction(QStringLiteral("Chế độ an toàn / Tạm dừng (Safe Mode)"));
     safeModeAction_->setCheckable(true);
     connect(safeModeAction_, &QAction::toggled, this, &TrayController::onToggleSafeMode);
 

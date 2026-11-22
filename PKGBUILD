@@ -1,6 +1,6 @@
 # Maintainer: VNSnowKey Contributors <vnsnowkey@archlinux.local>
 pkgname=vnsnowkey
-pkgver=1.0.6
+pkgver=2.0.0
 pkgrel=1
 pkgdesc="Vietnamese Input Method (BambooEngine core, evdev + uinput) for Linux Wayland and X11 (KDE, GNOME, Hyprland, Sway)"
 arch=('x86_64' 'aarch64')

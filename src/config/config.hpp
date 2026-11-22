@@ -78,7 +78,7 @@ struct Config {
     std::string outputCharset = "Unicode";
     bool autostart = true;
     bool osdEnabled = true;
-    bool rememberPerAppLang = true;
+    bool rememberPerAppLang = true; // Mặc định bật ghi nhớ chế độ gõ riêng theo từng ứng dụng
     bool bypassPasswordDialogs = true;
     bool safeMode = false;
 
@@ -86,7 +86,7 @@ struct Config {
     bool freeToneMarking = true;
     bool modernToneStyle = true; // true: hoà, thuỷ; false: hòa, thủy
     bool spellCheckEnabled = true;
-    bool autoRestoreEnglish = true;
+    bool autoRestoreEnglish = false; // Mặc định tắt tự động khôi phục từ tiếng Anh khi gõ sai
     bool shorthandInitialConsonant = false;
     bool shorthandFinalConsonant = false;
     bool macroEnabled = true;

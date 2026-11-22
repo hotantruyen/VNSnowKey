@@ -63,7 +63,7 @@ void setupSignalHandlers() {
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName("vnsnowkeyd");
-    app.setApplicationVersion("1.0.6");
+    app.setApplicationVersion("2.0.0");
 
     std::string configPath;
     bool noGrab = false;
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--doctor") {
             printDoctor = true;
         } else if (arg == "--help" || arg == "-h") {
-            std::cout << "VNSnowKey Daemon (vnsnowkeyd) v1.0.6\n"
+            std::cout << "VNSnowKey Daemon (vnsnowkeyd) v2.0.0\n"
                       << "Usage: vnsnowkeyd [--config <path>] [--no-grab] [--doctor]\n";
             return 0;
         }

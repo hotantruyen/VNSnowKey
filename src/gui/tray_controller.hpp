@@ -34,6 +34,7 @@ public:
 
     void refreshFromDaemon();
     static QIcon buildAdaptiveMonochromeIcon(bool isVietnamese, bool forceDarkTheme = false, bool useSystemTheme = true);
+    static QString locateIconAsset(const QString& filename);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -52,7 +53,6 @@ public slots:
 private:
     void setupMenu();
     void updateVisuals();
-    static QString locateIconAsset(const QString& filename);
 
     SettingsWindow* settingsWin_ = nullptr;
 #ifdef VNSNOWKEY_HAVE_KF6_SNI

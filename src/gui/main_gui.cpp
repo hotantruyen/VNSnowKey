@@ -46,7 +46,7 @@ QIcon loadAppWindowIcon() {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("vnsnowkey-gui"));
-    QApplication::setApplicationVersion(QStringLiteral("1.0.6"));
+    QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
     QApplication::setOrganizationName(QStringLiteral("VNSnowKey"));
     QApplication::setDesktopFileName(QStringLiteral("org.vnsnowkey.App"));
     QApplication::setWindowIcon(loadAppWindowIcon());
